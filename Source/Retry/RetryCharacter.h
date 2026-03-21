@@ -7,6 +7,7 @@
 #include "Logging/LogMacros.h"
 #include "Components/HealthComponent.h"
 #include "Components/CombatComponent.h"
+#include "Components/InventoryComponent.h"
 #include "RetryCharacter.generated.h"
 
 class USpringArmComponent;
@@ -61,6 +62,9 @@ public:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components")
 	UCombatComponent* CombatComponent;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components")
+	UInventoryComponent* InventoryComponent;
 
 protected:
 

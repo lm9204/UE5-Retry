@@ -38,6 +38,8 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Inventory")
 	bool HasItem(FName ItemID) const;
+	
+	FItemData* GetItemData(FName ItemID) const;
 
 	// ── Delegate ─────────────────────────────────────────
 	UPROPERTY(BlueprintAssignable, Category="Inventory|Events")
@@ -46,6 +48,9 @@ public:
 	// ── 디자이너 설정값 ──────────────────────────────────
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Inventory")
 	float MaxWeight = 30.f;
+
+	UPROPERTY(EditDefaultsOnly, Category="Inventory")
+	UDataTable* ItemDataTable;
 	
 protected:
 	virtual void BeginPlay() override;
@@ -57,7 +62,7 @@ private:
 	UPROPERTY()
 	TMap<ESlotType, FItemData> EquippedItems;
 
-
 	FItemData* FindItem(FName ItemID);
 	void ApplyWeightPenalty();
+	void RemoveItemInternal(FName ItemID);
 };

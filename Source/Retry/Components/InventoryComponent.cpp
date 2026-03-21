@@ -4,6 +4,8 @@
 #include "Components/InventoryComponent.h"
 
 #include "IDetailTreeNode.h"
+#include "GameFramework/Character.h"
+#include "GameFramework/CharacterMovementComponent.h"
 
 // Sets default values
 UInventoryComponent::UInventoryComponent()
@@ -19,16 +21,17 @@ void UInventoryComponent::BeginPlay()
 
 bool UInventoryComponent::AddItem(FItemData Item)
 {
-	//무게 초과 체크
-	if (GetTotalWeight() + Item.Weight > MaxWeight)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[Inventory] 무게 초과 - 아이템 추가 실패: %s"),
-			*Item.ItemID.ToString());
-		return false;
-	}
+	// //무게 초과 체크
+	// if (GetTotalWeight() + Item.Weight > MaxWeight)
+	// {
+	// 	UE_LOG(LogTemp, Warning, TEXT("[Inventory] 무게 초과 - 아이템 추가 실패: %s"),
+	// 		*Item.ItemID.ToString());
+	// 	return false;
+	// }
 
 	Items.Add(Item);
 	OnInventoryChanged.Broadcast();
+	ApplyWeightPenalty();
 
 	UE_LOG(LogTemp, Warning, TEXT("[Inventory] 아이템 추가: %s / 현재 무게: %.1f / %.1f"),
 		*Item.ItemID.ToString(), GetTotalWeight(), MaxWeight);
@@ -99,8 +102,20 @@ bool UInventoryComponent::UnEquipItem(ESlotType Slot)
 {
 	if (!EquippedItems.Contains(Slot)) return false;
 
+	// 슬롯에서 꺼내서 인벤토리로 반환
+	FItemData Item = EquippedItems[Slot];
+	Items.Add(Item);
+
 	EquippedItems.Remove(Slot);
 	OnInventoryChanged.Broadcast();
+
+	ApplyWeightPenalty();
+
+	const UEnum* EnumPtr = StaticEnum<ESlotType>();
+	FString SlotName = EnumPtr->GetDisplayNameTextByValue((int64)Slot).ToString();
+	UE_LOG(LogTemp, Warning, TEXT("[Inventory] 해제 후 인벤토리 반환: %s ← %s"),
+		*Item.ItemID.ToString(), *SlotName);
+	
 	return true;
 }
 
@@ -134,6 +149,17 @@ bool UInventoryComponent::HasItem(FName ItemID) const
 	});
 }
 
+FItemData* UInventoryComponent::GetItemData(FName ItemID) const
+{
+	if (!ItemDataTable)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[Inventory] ItemDataTable이 없음."));
+		return nullptr;
+	}
+
+	return ItemDataTable->FindRow<FItemData>(ItemID, TEXT("GetItemData"));
+}
+
 FItemData* UInventoryComponent::FindItem(FName ItemID)
 {
 	return Items.FindByPredicate([&](const FItemData& Item)
@@ -144,4 +170,28 @@ FItemData* UInventoryComponent::FindItem(FName ItemID)
 
 void UInventoryComponent::ApplyWeightPenalty()
 {
+	ACharacter* Owner = Cast<ACharacter>(GetOwner());
+	if (!Owner) return;
+
+	UCharacterMovementComponent* Movement = Owner->GetCharacterMovement();
+	if (!Movement) return;
+
+	float WeightRatio = GetTotalWeight() / MaxWeight;
+
+	if (WeightRatio > 0.8f)
+	{
+		Movement->MaxWalkSpeed = 250.f;
+	}
+	else
+	{
+		Movement->MaxWalkSpeed = 500.f;
+	}
+}
+
+void UInventoryComponent::RemoveItemInternal(FName ItemID)
+{
+	int32 Index = Items.IndexOfByPredicate([&](const FItemData& Item)
+	{
+		return Item.ItemID == ItemID;
+	});
 }
