@@ -21,7 +21,7 @@ public:
 	void Attack();
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat" )
-	float BaseDamage = 25.f;
+	float BaseDamage = 5.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat" )
 	float AttackRange = 300.f;
