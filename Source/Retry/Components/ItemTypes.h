@@ -15,6 +15,7 @@ enum class EItemType : uint8
 UENUM(BlueprintType)
 enum class ESlotType : uint8
 {
+	None	UMETA(DisplayName="None"),
 	Head	UMETA(DisplayName="Head"),
 	Body	UMETA(DisplayName="Body"),
 	Legs	UMETA(DisplayName="Legs"),
@@ -31,6 +32,9 @@ struct FItemData : public FTableRowBase
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	EItemType ItemType = EItemType::Misc;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	ESlotType SlotType = ESlotType::None;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	FText DisplayName;

@@ -60,29 +60,37 @@ bool UInventoryComponent::EquipItem(FName ItemID)
 {
 	FItemData* Item = FindItem(ItemID);
 	if (!Item) return false;
-
-	ESlotType Slot;
-	if (Item->ItemType == EItemType::Weapon)
-	{
-		Slot = ESlotType::Weapon;
-	}
-	else if (Item->ItemType == EItemType::Armor)
-	{
-		Slot = ESlotType::Body;
-	}
-	else
+	
+	if (Item->SlotType == ESlotType::None)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[Inventory] 장착 불가 아이템: %s"),
 			*ItemID.ToString());
-
 		return false;
 	}
 
-	EquippedItems.Add(Slot, *Item);
+	if (EquippedItems.Contains(Item->SlotType))
+	{
+		FItemData OldItem = EquippedItems[Item->SlotType];
+		Items.Add(OldItem);
+		
+		// UEnum 통해서 DisplayName 가져오기
+		const UEnum* EnumPtr = StaticEnum<ESlotType>();
+		FString SlotName = EnumPtr->GetDisplayNameTextByValue((int64)Item->SlotType).ToString();
+		
+		UE_LOG(LogTemp, Warning, TEXT("[Inventory] 슬롯(%s) 교체: %s -> %s"),
+			*SlotName, *ItemID.ToString(), *ItemID.ToString());
+	}
+
+	FItemData ItemCopy = *Item;
+	RemoveItemInternal(ItemID);
+	
+	EquippedItems.Add(Item->SlotType, ItemCopy);
 	OnInventoryChanged.Broadcast();
 	
-	UE_LOG(LogTemp, Warning, TEXT("[Inventory] 장착: %s ->  ArmorReduction: %.2f"),
-	*ItemID.ToString(), GetTotalArmorReduction());
+	const UEnum* EnumPtr = StaticEnum<ESlotType>();
+	FString SlotName = EnumPtr->GetDisplayNameTextByValue((int64)ItemCopy.SlotType).ToString();
+	UE_LOG(LogTemp, Warning, TEXT("[Inventory] 장착: %s → 슬롯: %s → ArmorReduction: %.2f"),
+		*ItemID.ToString(), *SlotName, GetTotalArmorReduction());
 
 	return true;
 }
