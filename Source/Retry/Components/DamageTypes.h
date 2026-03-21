@@ -9,7 +9,7 @@
  * 
  */
 
-UENUM(BlueprintType)
+UENUM(BlueprintType, meta=(ScriptName="RetryDamageType"))
 enum class EDamageType : uint8 
 {
 	Bullet		UMETA(DisplayName = "Bullet"),
