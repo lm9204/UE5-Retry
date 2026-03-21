@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "Components/SkeletalMeshComponent.h"
 #include "Components/HealthComponent.h"
 #include "DummyTarget.generated.h"
 
@@ -16,12 +17,18 @@ public:
 	// Sets default values for this actor's properties
 	ADummyTarget();
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly)
+	UHealthComponent* HealthComponent;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly)
+	USkeletalMeshComponent* Mesh;
+
 protected:
 	// Called when the game starts or when spawned
 	virtual void BeginPlay() override;
 
-public:	
-	// Called every frame
-	virtual void Tick(float DeltaTime) override;
+private:
+	UFUNCTION()
+	void OnDeath();
 
 };

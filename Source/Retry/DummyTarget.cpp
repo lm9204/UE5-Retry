@@ -3,11 +3,17 @@
 
 #include "DummyTarget.h"
 
+#include "PhysicsEngine/PhysicsAsset.h"
+
 // Sets default values
 ADummyTarget::ADummyTarget()
 {
+	Mesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("Mesh"));
+	RootComponent = Mesh;
+
+	HealthComponent = CreateDefaultSubobject<UHealthComponent>(TEXT("HealthComponent"));
  	// Set this actor to call Tick() every frame.  You can turn this off to improve performance if you don't need it.
-	PrimaryActorTick.bCanEverTick = true;
+	PrimaryActorTick.bCanEverTick = false;
 
 }
 
@@ -15,13 +21,25 @@ ADummyTarget::ADummyTarget()
 void ADummyTarget::BeginPlay()
 {
 	Super::BeginPlay();
-	
+	HealthComponent->OnDeath.AddDynamic(this, &ADummyTarget::OnDeath);
 }
 
-// Called every frame
-void ADummyTarget::Tick(float DeltaTime)
+void ADummyTarget::OnDeath()
 {
-	Super::Tick(DeltaTime);
+	// Mesh가 유효한지 먼저 확인
+	if (!Mesh)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[DummyTarget] Mesh is NULL"));
+		return;
+	}
 
+	UE_LOG(LogTemp, Warning, TEXT("[DummyTarget] Mesh: %s"), *Mesh->GetName());
+	UE_LOG(LogTemp, Warning, TEXT("[DummyTarget] PhysicsAsset: %s"), 
+		Mesh->GetPhysicsAsset() ? *Mesh->GetPhysicsAsset()->GetName() : TEXT("NULL"));
+
+	Mesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+	Mesh->SetCollisionProfileName(TEXT("Ragdoll"));
+	Mesh->SetAllBodiesSimulatePhysics(true);
+	Mesh->SetSimulatePhysics(true);
+	Mesh->SetPhysicsBlendWeight(1.f);
 }
-
