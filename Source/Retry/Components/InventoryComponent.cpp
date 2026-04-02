@@ -81,7 +81,7 @@ bool UInventoryComponent::EquipItem(FName ItemID)
 		FString SlotName = EnumPtr->GetDisplayNameTextByValue((int64)Item->SlotType).ToString();
 		
 		UE_LOG(LogTemp, Warning, TEXT("[Inventory] 슬롯(%s) 교체: %s -> %s"),
-			*SlotName, *ItemID.ToString(), *ItemID.ToString());
+			*SlotName, *OldItem.DisplayName.ToString(), *ItemID.ToString());
 	}
 
 	FItemData ItemCopy = *Item;
