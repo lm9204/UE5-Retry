@@ -217,4 +217,6 @@ void UInventoryComponent::RemoveItemInternal(FName ItemID)
 	{
 		return Item.ItemID == ItemID;
 	});
+
+	Items.RemoveAt(Index);
 }
