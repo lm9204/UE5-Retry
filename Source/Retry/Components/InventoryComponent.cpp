@@ -89,6 +89,8 @@ bool UInventoryComponent::EquipItem(FName ItemID)
 	
 	EquippedItems.Add(Item->SlotType, ItemCopy);
 	OnInventoryChanged.Broadcast();
+
+	ApplyWeightPenalty();
 	
 	const UEnum* EnumPtr = StaticEnum<ESlotType>();
 	FString SlotName = EnumPtr->GetDisplayNameTextByValue((int64)ItemCopy.SlotType).ToString();
