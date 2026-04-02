@@ -2,6 +2,8 @@
 
 
 #include "HealthComponent.h"
+
+#include "DroppedItemActor.h"
 #include "InventoryComponent.h"
 
 // Sets default values for this component's properties
@@ -52,6 +54,28 @@ void UHealthComponent::BeginPlay()
 void UHealthComponent::HandleDeath()
 {
 	bIsDead = true;
+
+	// 인벤토리 아이템 드롭
+	UInventoryComponent* Inv = GetOwner()->FindComponentByClass<UInventoryComponent>();
+	if (Inv)
+	{
+		TArray<FItemData> Items = Inv->GetAllItems();
+		for (const FItemData& Item : Items)
+		{
+			// 랜덤 위치에 드롭
+			FVector DropLocation = GetOwner()->GetActorLocation()
+				+ FVector(FMath::RandRange(-50.f, 50.f), FMath::RandRange(-50.f, 50.f), 0.f);
+
+			ADroppedItemActor* Dropped = GetWorld()->SpawnActor<ADroppedItemActor>(
+				ADroppedItemActor::StaticClass(),
+				DropLocation,
+				FRotator::ZeroRotator
+			);
+
+			if (Dropped) Dropped->ItemData = Item;
+		}
+	}
+	
 	OnDeath.Broadcast();
 
 	UE_LOG(LogTemp, Warning, TEXT("[Health] %s is Dead!"), *GetOwner()->GetName());
