@@ -51,3 +51,15 @@ struct FItemData : public FTableRowBase
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	int32 StackCount = -1; // Consumable 전용
 };
+
+USTRUCT(BlueprintType)
+struct FEquippedItemSlot
+{
+	GENERATED_BODY();
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	ESlotType Slot = ESlotType::None;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	FItemData Item;
+};
