@@ -38,6 +38,15 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Inventory")
 	bool HasItem(FName ItemID) const;
+
+	UFUNCTION(BlueprintPure, Category = "Inventory")
+	TArray<FItemData> GetAllItems() const {	return Items; }
+
+	UFUNCTION(BlueprintPure, Category = "Inventory")
+	TMap<ESlotType, FItemData> GetEquippedItems() const { return EquippedItems; }
+
+	UFUNCTION(BlueprintPure, Category = "Inventory")
+	TArray<FEquippedItemSlot> GetEquippedSlots() const;
 	
 	FItemData* GetItemData(FName ItemID) const;
 

@@ -149,6 +149,19 @@ bool UInventoryComponent::HasItem(FName ItemID) const
 	});
 }
 
+TArray<FEquippedItemSlot> UInventoryComponent::GetEquippedSlots() const
+{
+	TArray<FEquippedItemSlot> Result;
+	for (const auto& Pair: EquippedItems)
+	{
+		FEquippedItemSlot S;
+		S.Slot = Pair.Key;
+		S.Item = Pair.Value;
+		Result.Add(S);
+	}
+	return Result;
+}
+
 FItemData* UInventoryComponent::GetItemData(FName ItemID) const
 {
 	if (!ItemDataTable)
