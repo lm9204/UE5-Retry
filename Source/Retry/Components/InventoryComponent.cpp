@@ -136,10 +136,18 @@ float UInventoryComponent::GetTotalArmorReduction() const
 float UInventoryComponent::GetTotalWeight() const
 {
 	float Total = 0.f;
+	// 인벤토리
 	for (const FItemData& Item : Items)
 	{
 		Total += Item.Weight;
 	}
+
+	// 장착 아이템
+	for (auto& Pair : EquippedItems)
+	{
+		Total += Pair.Value.Weight;
+	}
+	
 	return Total;
 }
 
