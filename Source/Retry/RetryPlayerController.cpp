@@ -44,8 +44,22 @@ void ARetryPlayerController::BeginPlay()
 			UE_LOG(LogRetry, Error, TEXT("Could not spawn mobile controls widget."));
 
 		}
-
 	}
+	if (InventoryWidgetClass)
+	{
+		InventoryWidget = CreateWidget<UInventoryWidget>(this, InventoryWidgetClass);
+		InventoryWidget->AddToViewport();
+		InventoryWidget->SetVisibility(ESlateVisibility::Hidden);
+		
+	}
+
+	if (LootWidgetClass)
+	{
+		LootWidget = CreateWidget<ULootWidget>(this, LootWidgetClass);
+		LootWidget->AddToViewport();
+		LootWidget->SetVisibility(ESlateVisibility::Hidden);
+	}
+	
 }
 
 void ARetryPlayerController::SetupInputComponent()
@@ -81,6 +95,12 @@ void ARetryPlayerController::SetupInputComponent()
 				EnhancedInputComponent->BindAction(ClickMoveAction, ETriggerEvent::Started,
 					this, &ARetryPlayerController::OnClickMove);
 			}
+
+			if (IA_Inventory)
+			{
+				EnhancedInputComponent->BindAction(IA_Inventory, ETriggerEvent::Started, this,
+					&ARetryPlayerController::ToggleInventory);
+			}
 		}
 	}
 }
@@ -93,5 +113,36 @@ void ARetryPlayerController::OnClickMove()
 	if (HitResult.bBlockingHit)
 	{
 		UAIBlueprintHelperLibrary::SimpleMoveToLocation(this, HitResult.Location);
+	}
+}
+
+void ARetryPlayerController::ToggleInventory()
+{
+	if (!InventoryWidget) return;
+
+	bool bVisible = InventoryWidget->IsVisible();
+	UE_LOG(LogTemp, Warning, TEXT("ToggleInventory")); 
+
+	if (bVisible)
+	{
+		InventoryWidget->SetVisibility(ESlateVisibility::Collapsed);
+	}
+	else
+	{
+		// 열 떄 데이터 갱신	
+		APawn* P = GetPawn();
+		if (P)
+		{
+			UInventoryComponent* Inv = P->FindComponentByClass<UInventoryComponent>();
+			if (Inv)
+			{
+				InventoryWidget->RefreshInventory(
+					Inv->GetAllItems(),
+					Inv->GetEquippedSlots()
+				);
+			}
+		}
+
+		InventoryWidget->SetVisibility(ESlateVisibility::Visible);
 	}
 }

@@ -3,6 +3,8 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "InventoryWidget.h"
+#include "LootWidget.h"
 #include "GameFramework/PlayerController.h"
 #include "RetryPlayerController.generated.h"
 
@@ -42,6 +44,22 @@ protected:
 	UPROPERTY(EditAnywhere, Category="Input|Actions")
 	TObjectPtr<UInputAction> ClickMoveAction;
 
+	UPROPERTY(EditDefaultsOnly, Category="UI")
+	TSubclassOf<UInventoryWidget> InventoryWidgetClass;
+
+	UPROPERTY(EditDefaultsOnly, Category="UI")
+	TSubclassOf<ULootWidget> LootWidgetClass;
+	
+	UPROPERTY(EditDefaultsOnly, Category="UI")
+	UInputAction* IA_Inventory;
+	
+	UPROPERTY()
+	UInventoryWidget* InventoryWidget;
+
+	UPROPERTY()
+	ULootWidget* LootWidget;
+
+
 	/** Gameplay initialization */
 	virtual void BeginPlay() override;
 
@@ -49,5 +67,5 @@ protected:
 	virtual void SetupInputComponent() override;
 private:
 	void OnClickMove();
-
+	void ToggleInventory();
 };
