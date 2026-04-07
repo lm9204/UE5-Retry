@@ -9,6 +9,7 @@
 #include "Components/CombatComponent.h"
 #include "Components/InventoryComponent.h"
 #include "Components/LootComponent.h"
+#include "Navigation/CrowdAgentInterface.h"
 #include "RetryCharacter.generated.h"
 
 class USpringArmComponent;
@@ -23,7 +24,7 @@ DECLARE_LOG_CATEGORY_EXTERN(LogTemplateCharacter, Log, All);
  *  Implements a controllable orbiting camera
  */
 UCLASS(abstract)
-class ARetryCharacter : public ACharacter
+class ARetryCharacter : public ACharacter, public ICrowdAgentInterface
 {
 	GENERATED_BODY()
 
@@ -102,6 +103,12 @@ public:
 	/** Handles jump pressed inputs from either controls or UI interfaces */
 	UFUNCTION(BlueprintCallable, Category="Input")
 	virtual void DoJumpEnd();
+
+	virtual FVector GetCrowdAgentLocation() const override;
+	virtual FVector GetCrowdAgentVelocity() const override;
+	virtual void GetCrowdAgentCollisions(float& CylinderRadius,
+		float& CylinderHalfHeight) const override;
+	virtual float GetCrowdAgentMaxSpeed() const override;
 
 private:
 	UFUNCTION()

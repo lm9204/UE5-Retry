@@ -38,6 +38,13 @@ public:
 	UFUNCTION(Exec)
 	void TestArmorDamage(float Amount);
 
+	UFUNCTION(Exec)
+	void SetNPCAggression(float Value);
+	
+	UFUNCTION(Exec)
+	void SpawnNPC(FString PersonalityType);
+
+	
 private:
 	UInventoryComponent* GetInventory();
 };

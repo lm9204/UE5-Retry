@@ -11,6 +11,7 @@
 #include "EnhancedInputSubsystems.h"
 #include "InputActionValue.h"
 #include "Retry.h"
+#include "Navigation/CrowdManager.h"
 
 
 ARetryCharacter::ARetryCharacter()
@@ -63,6 +64,11 @@ void ARetryCharacter::BeginPlay()
 
 	SetActorRotation(FRotator(0.f, 45.f, 0.f));
 	HealthComponent->OnDeath.AddDynamic(this, &ARetryCharacter::OnDeath);
+
+	if (UCrowdManager* CrowdManager = UCrowdManager::GetCurrent(GetWorld()))
+	{
+		CrowdManager->RegisterAgent(this);
+	}
 }
 
 void ARetryCharacter::Tick(float DeltaTime)
@@ -180,6 +186,28 @@ void ARetryCharacter::DoJumpEnd()
 	// signal the character to stop jumping
 	StopJumping();
 }
+
+FVector ARetryCharacter::GetCrowdAgentLocation() const
+{
+	return GetActorLocation();
+}
+
+FVector ARetryCharacter::GetCrowdAgentVelocity() const
+{
+	return GetVelocity();
+}
+
+void ARetryCharacter::GetCrowdAgentCollisions(float& CylinderRadius, float& CylinderHalfHeight) const
+{
+	CylinderRadius = GetCapsuleComponent()->GetScaledCapsuleRadius();
+	CylinderHalfHeight = GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
+}
+
+float ARetryCharacter::GetCrowdAgentMaxSpeed() const
+{
+	return GetCharacterMovement()->MaxWalkSpeed;
+}
+
 
 void ARetryCharacter::OnDeath()
 {

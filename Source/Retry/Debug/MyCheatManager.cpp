@@ -2,10 +2,13 @@
 #include "MyCheatManager.h"
 
 #include "IPropertyTable.h"
+#include "RetryNPCCharacter.h"
 #include "Components/CombatComponent.h"
 #include "GameFramework/Character.h"
 #include "Components/HealthComponent.h"
 #include "Components/InventoryComponent.h"
+#include "Components/PersonalityComponent.h"
+#include "Kismet/GameplayStatics.h"
 
 void UMyCheatManager::DamageMe(float Amount)
 {
@@ -140,4 +143,45 @@ UInventoryComponent* UMyCheatManager::GetInventory()
 	if (!P) return nullptr;
 
 	return P->FindComponentByClass<UInventoryComponent>();
+}
+
+void UMyCheatManager::SetNPCAggression(float Value)
+{
+	// 가장 가까운 NPC 찾아서 수치 변경
+	APawn* Player = GetOuterAPlayerController()->GetPawn();
+	if (!Player) return;
+
+	TArray<AActor*> NPCs;
+	UGameplayStatics::GetAllActorsOfClass(
+		GetWorld(), ARetryNPCCharacter::StaticClass(), NPCs);
+
+	if (NPCs.Num() == 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[CheatManager] 주변에 NPC 없음"));
+		return;
+	}
+
+	AActor* Closest = NPCs[0];
+	for (AActor* NPC: NPCs)
+	{
+		if (FVector::Dist(Player->GetActorLocation(), NPC->GetActorLocation()) <
+			FVector::Dist(Player->GetActorLocation(), Closest->GetActorLocation()))
+		{
+			Closest = NPC;
+		}
+	}
+
+	if (UPersonalityComponent* PC =
+		Closest->FindComponentByClass<UPersonalityComponent>())
+	{
+		PC->Aggression = FMath::Clamp(Value, 0.f, 1.f);
+		PC->SyncToBlackboard();
+		UE_LOG(LogTemp, Warning, TEXT("[CheatManager] %s Aggression -> %.2f"),
+			*Closest->GetName(), PC->GetAggression());
+	}
+}
+
+void UMyCheatManager::SpawnNPC(FString PersonalityType)
+{
+	
 }
