@@ -36,26 +36,25 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Personality")
 	float GetTrust() const { return Trust; }
 
+	void ApplyPersonalityPreset();
+	
 	// Blackboard 즉시 업데이트
 	void SyncToBlackboard();
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Personality")
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Personality")
 	EPersonalityType DefaultPersonality = EPersonalityType::Opportunist;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Personality")
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Personality")
 	float Aggression = 0.5f;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Personality")
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Personality")
 	float Fear = 0.5f;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Personality")
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Personality")
 	float Trust = 0.5f;
 
 protected:
 	// Called when the game starts
 	virtual void BeginPlay() override;
-
-private:
-	void ApplyPersonalityPreset();
 	
 };
