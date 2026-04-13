@@ -47,13 +47,23 @@ void ARetryNPCCharacter::BeginPlay()
 {
 	Super::BeginPlay();
 
+	UE_LOG(LogTemp, Warning, TEXT("[NPC] BeginPlay 호출"));
+
 	// OnDeath 바인딩
 	HealthComponent->OnDeath.AddDynamic(this, &ARetryNPCCharacter::OnDeath);
 	HealthComponent->OnHealthChanged.AddDynamic(this, &ARetryNPCCharacter::OnHealthChanged);
 
 	// Perception 바인딩
-	PerceptionComponent->OnTargetPerceptionUpdated.AddDynamic(
-		this, &ARetryNPCCharacter::OnTargetPerceptionUpdated);
+	if (PerceptionComponent)
+	{
+		PerceptionComponent->OnTargetPerceptionUpdated.AddDynamic(
+			this, &ARetryNPCCharacter::OnTargetPerceptionUpdated);
+		UE_LOG(LogTemp, Warning, TEXT("[NPC] Perception 바인딩 완료"));
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("[NPC] PerceptionComponent 없음"));
+	}
 
 	// FloatingName 설정
 	if (FloatingNameWidgetClass)

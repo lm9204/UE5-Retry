@@ -12,6 +12,8 @@
 #include "InputActionValue.h"
 #include "Retry.h"
 #include "Navigation/CrowdManager.h"
+#include "Perception/AIPerceptionStimuliSourceComponent.h"
+#include "Perception/AISense_Sight.h"
 
 
 ARetryCharacter::ARetryCharacter()
@@ -69,6 +71,18 @@ void ARetryCharacter::BeginPlay()
 	{
 		CrowdManager->RegisterAgent(this);
 	}
+
+	UAIPerceptionStimuliSourceComponent* StimuliSource =
+		FindComponentByClass<UAIPerceptionStimuliSourceComponent>();
+
+	if (!StimuliSource)
+	{
+		StimuliSource = NewObject<UAIPerceptionStimuliSourceComponent>(this);
+		StimuliSource->RegisterComponent();
+	}
+
+	StimuliSource->RegisterForSense(UAISense_Sight::StaticClass());
+	StimuliSource->RegisterWithPerceptionSystem();
 }
 
 void ARetryCharacter::Tick(float DeltaTime)

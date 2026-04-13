@@ -17,6 +17,11 @@ class RETRY_API ARetryNPCController : public AAIController
 public:
 	ARetryNPCController(const FObjectInitializer& ObjectInitializer);
 
+	virtual FGenericTeamId GetGenericTeamId() const override
+	{
+		return FGenericTeamId(1);
+	}
+
 	UPROPERTY(EditDefaultsOnly, Category="AI")
 	class UBehaviorTree* BehaviorTreeAsset;
 

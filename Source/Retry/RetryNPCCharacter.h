@@ -3,17 +3,24 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "GenericTeamAgentInterface.h"
 #include "GameFramework/Character.h"
 #include "RetryNPCCharacter.generated.h"
 
 UCLASS()
-class RETRY_API ARetryNPCCharacter : public ACharacter
+class RETRY_API ARetryNPCCharacter : public ACharacter,
+	public IGenericTeamAgentInterface
 {
 	GENERATED_BODY()
 
 public:
 	// Sets default values for this character's properties
 	ARetryNPCCharacter();
+
+	virtual FGenericTeamId GetGenericTeamId() const override
+	{
+		return FGenericTeamId(1);
+	}
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	class UHealthComponent* HealthComponent;
@@ -37,7 +44,7 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category="UI")
 	TSubclassOf<class UFloatingNameWidget> FloatingNameWidgetClass;
 
-	UPROPERTY(EditDefaultsOnly, Category = "UI")
+	UPROPERTY(EditAnywhere, Category = "UI")
 	FString NPCName = TEXT("NPC");
 
 protected:
