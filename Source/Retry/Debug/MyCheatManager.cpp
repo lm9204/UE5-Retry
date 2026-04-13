@@ -3,12 +3,15 @@
 
 #include "IPropertyTable.h"
 #include "RetryNPCCharacter.h"
+#include "RetryNPCController.h"
 #include "Components/CombatComponent.h"
 #include "GameFramework/Character.h"
 #include "Components/HealthComponent.h"
 #include "Components/InventoryComponent.h"
 #include "Components/PersonalityComponent.h"
 #include "Kismet/GameplayStatics.h"
+#include "Perception/AIPerceptionComponent.h"
+#include "Perception/AIPerceptionSystem.h"
 
 void UMyCheatManager::DamageMe(float Amount)
 {
@@ -183,5 +186,64 @@ void UMyCheatManager::SetNPCAggression(float Value)
 
 void UMyCheatManager::SpawnNPC(FString PersonalityType)
 {
+	APlayerController* PC = GetOuterAPlayerController();
+	if (!PC) return;
+
+	APawn* Player = PC->GetPawn();
+	if (!Player) return;
+
+	// 플레이어 앞 200 유닛에 스폰
+	FVector SpawnLocation = Player->GetActorLocation()
+		+ Player->GetActorForwardVector() * 200.f;
+
+	FRotator SpawnRotation = Player->GetActorRotation();
+
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.SpawnCollisionHandlingOverride =
+		ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
+
+	ARetryNPCCharacter* NPC = GetWorld()->SpawnActor<ARetryNPCCharacter>(
+		NPCCharacterClass.Get(), SpawnLocation, SpawnRotation, SpawnParams);
+
+	if (!IsValid(NPC)) 
+	{
+		UE_LOG(LogTemp, Error, TEXT("[Cheat] NPC 스폰 실패"));
+		return;
+	}
+
+	UPersonalityComponent* PC_Comp =
+		NPC->FindComponentByClass<UPersonalityComponent>();
+	if (!PC_Comp) return;
+
+	// 문자열로 성격 유형 설정
+	if (PersonalityType.Equals(TEXT("Aggressive"), ESearchCase::IgnoreCase))
+	{
+		PC_Comp->DefaultPersonality = EPersonalityType::Aggressive;
+	}
+	else if (PersonalityType.Equals(TEXT("Cautious"), ESearchCase::IgnoreCase))
+	{
+		PC_Comp->DefaultPersonality = EPersonalityType::Cautious;
+	}
+	else if (PersonalityType.Equals(TEXT("Supportive"), ESearchCase::IgnoreCase))
+	{
+		PC_Comp->DefaultPersonality = EPersonalityType::Supportive;
+	}
+	else if (PersonalityType.Equals(TEXT("Opportunist"), ESearchCase::IgnoreCase))
+	{
+		PC_Comp->DefaultPersonality = EPersonalityType::Opportunist;
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[Cheat] 알 수 없는 성격 유형: %s. Aggressive/Cautious/Supportive/Opportunist 중 입력"),
+			*PersonalityType);
+	}
+
+	// 성격 프리셋 적용 + Blackboard 동기화
+	PC_Comp->ApplyPersonalityPreset();
+	PC_Comp->SyncToBlackboard();
+
+	NPC->NPCName = PersonalityType;
 	
+	UE_LOG(LogTemp, Warning, TEXT("[Cheat] NPC 스폰: %s"), *PersonalityType);
 }

@@ -4,6 +4,7 @@
 #include "GameFramework/CheatManager.h"
 #include "Components/InventoryComponent.h"
 #include "Components/DamageTypes.h"
+#include "RetryNPCCharacter.h"
 #include "MyCheatManager.generated.h"
 
 UCLASS()
@@ -44,7 +45,9 @@ public:
 	UFUNCTION(Exec)
 	void SpawnNPC(FString PersonalityType);
 
-	
+	UPROPERTY(EditDefaultsOnly, Category="Cheat")
+	TSubclassOf<ARetryNPCCharacter> NPCCharacterClass;
+
 private:
 	UInventoryComponent* GetInventory();
 };
