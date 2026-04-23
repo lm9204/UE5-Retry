@@ -4,7 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
-#include "Components/ItemTypes.h"
+#include "Items/ItemTypes.h"
 #include "Components/SphereComponent.h"
 #include "DroppedItemActor.generated.h"
 
@@ -19,14 +19,14 @@ public:
 
 	// 드롭된 아이템 데이터
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Item")
-	FItemData ItemData;
+	FItemInstance ItemData;
 
 	// 루팅 가능 범위
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Item")
 	float LootRange = 150.f;
 
 	UFUNCTION(BlueprintCallable, Category = "Item")
-	FItemData GetItemData() const { return ItemData; }
+	FItemInstance GetItemData() const { return ItemData; }
 
 protected:
 	// Called when the game starts or when spawned
