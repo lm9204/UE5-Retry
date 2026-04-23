@@ -2,8 +2,7 @@
 
 
 #include "InventoryWidget.h"
-
-#include "DroppedItemActor.h"
+#include "Actor/DroppedItemActor.h"
 #include "RetryPlayerController.h"
 #include "Components/InventoryComponent.h"
 #include "Components/LootComponent.h"
@@ -62,7 +61,7 @@ void UInventoryWidget::RequestDrop(FName ItemID)
 	if (!OwnerInventory) return;
 
 	// 인벤토리에서 제거
-	FItemData* Item = OwnerInventory->GetItemData(ItemID);
+	FItemInstance* Item = OwnerInventory->FindItemByID(ItemID);
 	if (!Item) return;
 
 	FVector DropLocation = UGameplayStatics::GetPlayerCharacter(GetWorld(), 0)

@@ -2,8 +2,7 @@
 
 
 #include "HealthComponent.h"
-
-#include "DroppedItemActor.h"
+#include "Actor/DroppedItemActor.h"
 #include "InventoryComponent.h"
 
 // Sets default values for this component's properties
@@ -56,11 +55,10 @@ void UHealthComponent::HandleDeath()
 	bIsDead = true;
 
 	// 인벤토리 아이템 드롭
-	UInventoryComponent* Inv = GetOwner()->FindComponentByClass<UInventoryComponent>();
-	if (Inv)
+	if (UInventoryComponent* Inv = GetOwner()->FindComponentByClass<UInventoryComponent>())
 	{
-		TArray<FItemData> Items = Inv->GetAllItems();
-		for (const FItemData& Item : Items)
+		TArray<FItemInstance> Items = Inv->GetAllItems();
+		for (const FItemInstance& Item : Items)
 		{
 			// 랜덤 위치에 드롭
 			FVector DropLocation = GetOwner()->GetActorLocation()
@@ -83,8 +81,16 @@ void UHealthComponent::HandleDeath()
 
 float UHealthComponent::CalculateFinalDamage(float BaseDamage) const
 {
-	UInventoryComponent* Inv = GetOwner()->FindComponentByClass<UInventoryComponent>();
-	float Reduction = Inv ? Inv->GetTotalArmorReduction() : 0.f;
-	return BaseDamage * (1.f - Reduction);
+	float ArmorReduction = 0.f;
+
+	if (AActor* Owner = GetOwner())
+	{
+		if (UInventoryComponent* Inv = GetOwner()->FindComponentByClass<UInventoryComponent>())
+		{
+			ArmorReduction = Inv->GetTotalArmorReduction();
+		}
+	}
+	
+	return BaseDamage * (1.f - ArmorReduction);
 }
 

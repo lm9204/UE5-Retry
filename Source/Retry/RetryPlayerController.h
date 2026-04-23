@@ -51,7 +51,13 @@ protected:
 	TSubclassOf<ULootWidget> LootWidgetClass;
 	
 	UPROPERTY(EditDefaultsOnly, Category="UI")
-	UInputAction* IA_Inventory;
+	TObjectPtr<UInputAction> IA_Inventory;
+
+	UPROPERTY(EditDefaultsOnly, Category="Input")
+	TObjectPtr<UInputAction> IA_Fire;
+
+	UPROPERTY(EditDefaultsOnly, Category="Input")
+	TObjectPtr<UInputAction> IA_Reload;
 	
 	UPROPERTY()
 	UInventoryWidget* InventoryWidget;
@@ -68,4 +74,9 @@ protected:
 private:
 	void OnClickMove();
 	void ToggleInventory();
+
+	// Weapon
+	void OnFireStarted();
+	void OnFireCompleted();
+	void OnReload();
 };

@@ -10,6 +10,7 @@
 #include "Components/HealthComponent.h"
 #include "Components/InventoryComponent.h"
 #include "Components/PersonalityComponent.h"
+#include "Components/WeaponComponent.h"
 #include "Components/Widget.h"
 #include "Components/WidgetComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -24,6 +25,7 @@ ARetryNPCCharacter::ARetryNPCCharacter()
 	CombatComponent = CreateDefaultSubobject<UCombatComponent>(TEXT("CombatComponent"));
 	InventoryComponent = CreateDefaultSubobject<UInventoryComponent>(TEXT("InventoryComponent"));
 	PersonalityComponent = CreateDefaultSubobject<UPersonalityComponent>(TEXT("PersonalityComponent"));
+	WeaponComponent = CreateDefaultSubobject<UWeaponComponent>(TEXT("WeaponComponent"));
 
 	// AI Perception
 	PerceptionComponent = CreateDefaultSubobject<UAIPerceptionComponent>(TEXT("PerceptionComponent"));

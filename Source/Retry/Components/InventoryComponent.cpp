@@ -3,9 +3,13 @@
 
 #include "Components/InventoryComponent.h"
 
-#include "IDetailTreeNode.h"
+#include "WeaponComponent.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "Items/AmmoFragment.h"
+#include "Items/ArmorFragment.h"
+#include "Items/ItemDefinition.h"
+#include "Items/WeaponFragment.h"
 
 // Sets default values
 UInventoryComponent::UInventoryComponent()
@@ -19,31 +23,31 @@ void UInventoryComponent::BeginPlay()
 	Super::BeginPlay();
 }
 
-bool UInventoryComponent::AddItem(FItemData Item)
+bool UInventoryComponent::AddItem(FItemInstance Item)
 {
-	// //무게 초과 체크
-	// if (GetTotalWeight() + Item.Weight > MaxWeight)
-	// {
-	// 	UE_LOG(LogTemp, Warning, TEXT("[Inventory] 무게 초과 - 아이템 추가 실패: %s"),
-	// 		*Item.ItemID.ToString());
-	// 	return false;
-	// }
-
+	if (!Item.IsValid()) return false;
 	Items.Add(Item);
 	OnInventoryChanged.Broadcast();
 	ApplyWeightPenalty();
 
 	UE_LOG(LogTemp, Warning, TEXT("[Inventory] 아이템 추가: %s / 현재 무게: %.1f / %.1f"),
-		*Item.ItemID.ToString(), GetTotalWeight(), MaxWeight);
+		*Item.Definition->ItemID.ToString(), GetTotalWeight(), MaxWeight);
 
 	return true;
 }
 
+FItemInstance* UInventoryComponent::FindItemByID(FName ItemID)
+{
+	return Items.FindByPredicate([&](const FItemInstance& I){
+		return I.Definition && I.Definition->ItemID == ItemID;
+	});
+}
+
 bool UInventoryComponent::RemoveItem(FName ItemID)
 {
-	int32 Index = Items.IndexOfByPredicate([&](const FItemData& Item)
+	int32 Index = Items.IndexOfByPredicate([&](const FItemInstance& Item)
 	{
-		return Item.ItemID == ItemID;
+		return Item.Definition && Item.Definition->ItemID == ItemID;
 	});
 
 	if (Index == INDEX_NONE)
@@ -61,41 +65,56 @@ bool UInventoryComponent::RemoveItem(FName ItemID)
 
 bool UInventoryComponent::EquipItem(FName ItemID)
 {
-	FItemData* Item = FindItem(ItemID);
-	if (!Item) return false;
+	FItemInstance* Item = FindItemByID(ItemID);
+	if (!Item || !Item->Definition) return false;
+
+	// ArmorFragment
+	if (UArmorFragment* Armor = Item->Definition->FindFragment<UArmorFragment>())
+	{
+		if (EquippedItems.Contains(Armor->SlotType))
+		{
+			FItemInstance PrevItem = EquippedItems[Armor->SlotType];
+			Items.Add(PrevItem);
+
+			// UEnum 통해서 DisplayName 가져오기
+			const UEnum* EnumPtr = StaticEnum<ESlotType>();
+			FString SlotName = EnumPtr->GetDisplayNameTextByValue((int64)Armor->SlotType).ToString();
+
+			UE_LOG(LogTemp, Warning, TEXT("[Inventory] 슬롯(%s) 교체: %s -> %s"),
+				*SlotName, *PrevItem.Definition->DisplayName.ToString(), *ItemID.ToString());
+		}
+		EquippedItems.Add(Armor->SlotType, *Item);
+	}
+
+	// WeaponFragment
+	if (UWeaponFragment* Weapon = Item->Definition->FindFragment<UWeaponFragment>())
+	{
+		if (EquippedItems.Contains(ESlotType::Weapon))
+		{
+			FItemInstance PrevItem = EquippedItems[ESlotType::Weapon];
+			Items.Add(PrevItem);
+
+			// UEnum 통해서 DisplayName 가져오기
+			const UEnum* EnumPtr = StaticEnum<ESlotType>();
+			FString SlotName = EnumPtr->GetDisplayNameTextByValue((int64)ESlotType::Weapon).ToString();
+
+			UE_LOG(LogTemp, Warning, TEXT("[Inventory] 슬롯(%s) 교체: %s -> %s"),
+				*SlotName, *PrevItem.Definition->DisplayName.ToString(), *ItemID.ToString());
+		}
+		Weapon->OnFragmentActivated(GetOwner());
+		EquippedItems.Add(ESlotType::Weapon, *Item);
+	}
+
+	// AmmoFragment
+	if (UAmmoFragment* Ammo = Item->Definition->FindFragment<UAmmoFragment>())
+	{
+		UseAmmo(ItemID);
+	}
 	
-	if (Item->SlotType == ESlotType::None)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[Inventory] 장착 불가 아이템: %s"),
-			*ItemID.ToString());
-		return false;
-	}
-
-	if (EquippedItems.Contains(Item->SlotType))
-	{
-		FItemData OldItem = EquippedItems[Item->SlotType];
-		Items.Add(OldItem);
-		
-		// UEnum 통해서 DisplayName 가져오기
-		const UEnum* EnumPtr = StaticEnum<ESlotType>();
-		FString SlotName = EnumPtr->GetDisplayNameTextByValue((int64)Item->SlotType).ToString();
-		
-		UE_LOG(LogTemp, Warning, TEXT("[Inventory] 슬롯(%s) 교체: %s -> %s"),
-			*SlotName, *OldItem.DisplayName.ToString(), *ItemID.ToString());
-	}
-
-	FItemData ItemCopy = *Item;
 	RemoveItemInternal(ItemID);
-	
-	EquippedItems.Add(Item->SlotType, ItemCopy);
 	OnInventoryChanged.Broadcast();
 
 	ApplyWeightPenalty();
-	
-	const UEnum* EnumPtr = StaticEnum<ESlotType>();
-	FString SlotName = EnumPtr->GetDisplayNameTextByValue((int64)ItemCopy.SlotType).ToString();
-	UE_LOG(LogTemp, Warning, TEXT("[Inventory] 장착: %s → 슬롯: %s → ArmorReduction: %.2f"),
-		*ItemID.ToString(), *SlotName, GetTotalArmorReduction());
 
 	return true;
 }
@@ -105,7 +124,7 @@ bool UInventoryComponent::UnEquipItem(ESlotType Slot)
 	if (!EquippedItems.Contains(Slot)) return false;
 
 	// 슬롯에서 꺼내서 인벤토리로 반환
-	FItemData Item = EquippedItems[Slot];
+	FItemInstance Item = EquippedItems[Slot];
 	Items.Add(Item);
 
 	EquippedItems.Remove(Slot);
@@ -116,18 +135,48 @@ bool UInventoryComponent::UnEquipItem(ESlotType Slot)
 	const UEnum* EnumPtr = StaticEnum<ESlotType>();
 	FString SlotName = EnumPtr->GetDisplayNameTextByValue((int64)Slot).ToString();
 	UE_LOG(LogTemp, Warning, TEXT("[Inventory] 해제 후 인벤토리 반환: %s ← %s"),
-		*Item.ItemID.ToString(), *SlotName);
+		*Item.Definition->ItemID.ToString(), *SlotName);
 	
 	return true;
+}
+
+bool UInventoryComponent::UseAmmo(FName AmmoItemID)
+{
+	FItemInstance* Item = FindItemByID(AmmoItemID);
+	if (!Item) return false;
+
+	if (UAmmoFragment* AmmoFragment = Item->Definition->FindFragment<UAmmoFragment>())
+	{
+		if (AmmoFragment->AmmoCount <= 0) return false;
+
+		if (UWeaponComponent* WC = GetOwner()->FindComponentByClass<UWeaponComponent>())
+		{
+			// if (!WC->IsArmed()) return false;
+			WC->AddReserveAmmo(AmmoFragment->AmmoCount);
+			
+			return true;
+		}
+	}
+	return false;
+}
+
+int32 UInventoryComponent::GetTotalAmmoCount(FName AmmoItemID)
+{
+	FItemInstance* Item = FindItemByID(AmmoItemID);
+	return Item && Item->Definition ? Item->Definition->FindFragment<UAmmoFragment>()->AmmoCount : 0;
 }
 
 float UInventoryComponent::GetTotalArmorReduction() const
 {
 	float Total = 0.f;
-
 	for (const auto& Pair : EquippedItems)
 	{
-		Total += Pair.Value.ArmorReduction;
+		if (!Pair.Value.Definition) continue;
+		if (UArmorFragment* ArmorFragment =
+			Pair.Value.Definition->FindFragment<UArmorFragment>())
+		{
+			Total += ArmorFragment->ArmorReduction;
+		}
 	}
 
 	return FMath::Clamp(Total, 0.f, 0.8f);
@@ -137,15 +186,17 @@ float UInventoryComponent::GetTotalWeight() const
 {
 	float Total = 0.f;
 	// 인벤토리
-	for (const FItemData& Item : Items)
+	for (const FItemInstance& Item : Items)
 	{
-		Total += Item.Weight;
+		UItemDefinition* ItemDefinition = Item.Definition;
+		Total += ItemDefinition->Weight;
 	}
 
 	// 장착 아이템
 	for (auto& Pair : EquippedItems)
 	{
-		Total += Pair.Value.Weight;
+		UItemDefinition* ItemDefinition = Pair.Value.Definition;
+		Total += ItemDefinition->Weight;
 	}
 	
 	return Total;
@@ -153,9 +204,9 @@ float UInventoryComponent::GetTotalWeight() const
 
 bool UInventoryComponent::HasItem(FName ItemID) const
 {
-	return Items.ContainsByPredicate([&](const FItemData& Item)
+	return Items.ContainsByPredicate([&](const FItemInstance& Item)
 	{
-		return Item.ItemID == ItemID;
+		return Item.Definition && Item.Definition->ItemID == ItemID;
 	});
 }
 
@@ -170,25 +221,6 @@ TArray<FEquippedItemSlot> UInventoryComponent::GetEquippedSlots() const
 		Result.Add(S);
 	}
 	return Result;
-}
-
-FItemData* UInventoryComponent::GetItemData(FName ItemID) const
-{
-	if (!ItemDataTable)
-	{
-		UE_LOG(LogTemp, Error, TEXT("[Inventory] ItemDataTable이 없음."));
-		return nullptr;
-	}
-
-	return ItemDataTable->FindRow<FItemData>(ItemID, TEXT("GetItemData"));
-}
-
-FItemData* UInventoryComponent::FindItem(FName ItemID)
-{
-	return Items.FindByPredicate([&](const FItemData& Item)
-	{
-		return Item.ItemID == ItemID;
-	});
 }
 
 void UInventoryComponent::ApplyWeightPenalty()
@@ -213,10 +245,32 @@ void UInventoryComponent::ApplyWeightPenalty()
 
 void UInventoryComponent::RemoveItemInternal(FName ItemID)
 {
-	int32 Index = Items.IndexOfByPredicate([&](const FItemData& Item)
+	int32 Index = Items.IndexOfByPredicate([&](const FItemInstance& Item)
 	{
-		return Item.ItemID == ItemID;
+		return Item.Definition && Item.Definition->ItemID == ItemID;
 	});
 
 	Items.RemoveAt(Index);
+}
+
+void UInventoryComponent::ActivateItemFragment(FName ItemID, AActor* Owner)
+{
+	FItemInstance* Instance = FindItemByID(ItemID);
+	if (!Instance || !Instance->Definition) return;
+
+	for (UItemFragment* Fragment : Instance->Definition->Fragments)
+	{
+		if (Fragment) Fragment->OnFragmentActivated(Owner);
+	}
+}
+
+void UInventoryComponent::DeactivateItemFragment(FName ItemID, AActor* Owner)
+{
+	FItemInstance* Instance = FindItemByID(ItemID);
+	if (!Instance || !Instance->Definition) return;
+
+	for (UItemFragment* Fragment : Instance->Definition->Fragments)
+	{
+		if (Fragment) Fragment->OnFragmentDeactivated(Owner);
+	}
 }

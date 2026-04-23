@@ -9,6 +9,7 @@
 #include "Blueprint/UserWidget.h"
 #include "Blueprint/AIBlueprintHelperLibrary.h"
 #include "Retry.h"
+#include "Components/WeaponComponent.h"
 #include "Debug/MyCheatManager.h"
 #include "Widgets/Input/SVirtualJoystick.h"
 
@@ -98,8 +99,22 @@ void ARetryPlayerController::SetupInputComponent()
 
 			if (IA_Inventory)
 			{
-				EnhancedInputComponent->BindAction(IA_Inventory, ETriggerEvent::Started, this,
-					&ARetryPlayerController::ToggleInventory);
+				EnhancedInputComponent->BindAction(IA_Inventory, ETriggerEvent::Started,
+					this, &ARetryPlayerController::ToggleInventory);
+			}
+
+			if (IA_Fire)
+			{
+				EnhancedInputComponent->BindAction(IA_Fire, ETriggerEvent::Started,
+					this, &ARetryPlayerController::OnFireStarted);
+				EnhancedInputComponent->BindAction(IA_Fire, ETriggerEvent::Completed,
+					this, &ARetryPlayerController::OnFireCompleted);
+			}
+
+			if (IA_Reload)
+			{
+				EnhancedInputComponent->BindAction(IA_Reload, ETriggerEvent::Started,
+					this, &ARetryPlayerController::OnReload);
 			}
 		}
 	}
@@ -144,5 +159,38 @@ void ARetryPlayerController::ToggleInventory()
 		}
 
 		InventoryWidget->SetVisibility(ESlateVisibility::Visible);
+	}
+}
+
+void ARetryPlayerController::OnFireStarted()
+{
+	APawn* MyPawn = GetPawn();
+	if (!MyPawn) return;
+
+	if (UWeaponComponent* WeaponComp = MyPawn->FindComponentByClass<UWeaponComponent>())
+	{
+		WeaponComp->Fire();
+	}
+}
+
+void ARetryPlayerController::OnFireCompleted()
+{
+	APawn* MyPawn = GetPawn();
+	if (!MyPawn) return;
+
+	if (UWeaponComponent* WeaponComp = MyPawn->FindComponentByClass<UWeaponComponent>())
+	{
+		WeaponComp->StopFire();
+	}
+}
+
+void ARetryPlayerController::OnReload()
+{
+	APawn* MyPawn = GetPawn();
+	if (!MyPawn) return;
+
+	if (UWeaponComponent* WeaponComp = MyPawn->FindComponentByClass<UWeaponComponent>())
+	{
+		WeaponComp->Reload();
 	}
 }

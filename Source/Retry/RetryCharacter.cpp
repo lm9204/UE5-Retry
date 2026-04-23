@@ -55,6 +55,7 @@ ARetryCharacter::ARetryCharacter()
 	CombatComponent = CreateDefaultSubobject<UCombatComponent>(TEXT("CombatComponent"));
 	InventoryComponent = CreateDefaultSubobject<UInventoryComponent>(TEXT("InventoryComponent"));
 	LootComponent = CreateDefaultSubobject<ULootComponent>(TEXT("LootComponent"));
+	WeaponComponent = CreateDefaultSubobject<UWeaponComponent>(TEXT("WeaponComponent"));
 
 	// Note: The skeletal mesh and anim blueprint references on the Mesh component (inherited from Character) 
 	// are set in the derived blueprint asset named ThirdPersonCharacter (to avoid direct content references in C++)
@@ -92,6 +93,9 @@ void ARetryCharacter::Tick(float DeltaTime)
 	APlayerController* PC = Cast<APlayerController>(GetController());
 	if (!PC) return;
 
+	AActor* O = GetOwner();
+	if (!O) return;
+
 	if (PC->IsInputKeyDown(EKeys::RightMouseButton))
 	{
 		// 우클릭 시 마우스 바라보기
@@ -104,24 +108,18 @@ void ARetryCharacter::Tick(float DeltaTime)
 			Direction.Z = 0.f;
 
 			if (!Direction.IsNearlyZero())
+			{
 				SetActorRotation(Direction.Rotation());
+				WeaponComponent->SetAimTarget(HitResult.Location);
+			}
 		}
+		
+		WeaponComponent->StartAim();
 	}
 	else
 	{
-		FVector Velocity = GetVelocity();
-		Velocity.Z = 0.f;
-
-		if (!Velocity.IsNearlyZero())
-		{
-			FRotator TargetRotation = Velocity.Rotation();
-			FRotator NewRotation = FMath::RInterpTo(
-				GetActorRotation(), TargetRotation, DeltaTime, 10.f);
-			SetActorRotation(NewRotation);
-		}
-		// 평상시 W 기준 고정 방향
-		else
-			SetActorRotation(FRotator(0.f, 0.f, 0.f));
+		WeaponComponent->StopAim();
+		// WC->SetAimTarget(FVector::ZeroVector);
 	}
 }
 

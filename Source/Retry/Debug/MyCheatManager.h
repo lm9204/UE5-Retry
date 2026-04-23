@@ -26,10 +26,7 @@ public:
 
 	UFUNCTION(Exec)
 	void GiveItem(FString TypeName);
-
-	UFUNCTION(Exec)
-	void GiveArmor(float Reduction);
-
+	
 	UFUNCTION(Exec)
 	void EquipItem(FName ItemID);
 
@@ -48,6 +45,8 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category="Cheat")
 	TSubclassOf<ARetryNPCCharacter> NPCCharacterClass;
 
+	UPROPERTY(EditDefaultsOnly, Category="Cheat")
+	TMap<FString, UItemDefinition*> ItemDefinitionMap;
 private:
 	UInventoryComponent* GetInventory();
 };

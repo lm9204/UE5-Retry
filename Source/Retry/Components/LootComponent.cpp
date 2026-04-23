@@ -3,8 +3,9 @@
 
 #include "Components/LootComponent.h"
 
-#include "DroppedItemActor.h"
+#include "Actor/DroppedItemActor.h"
 #include "InventoryComponent.h"
+#include "Items/ItemDefinition.h"
 
 // Sets default values for this component's properties
 ULootComponent::ULootComponent()
@@ -29,7 +30,7 @@ bool ULootComponent::LootItem(ADroppedItemActor* DroppedItem)
 {
 	if (!DroppedItem || !OwnerInventory) return false;
 
-	FItemData Data = DroppedItem->GetItemData();
+	FItemInstance Data = DroppedItem->GetItemData();
 	bool bSuccess = OwnerInventory->AddItem(Data);
 
 	if (bSuccess)
@@ -38,7 +39,7 @@ bool ULootComponent::LootItem(ADroppedItemActor* DroppedItem)
 		OnLootRangeChanged.Broadcast(NearbyItems);
 		DroppedItem->Destroy();
 
-		UE_LOG(LogTemp, Warning, TEXT("[Loot] 획득: %s"), *Data.ItemID.ToString());
+		UE_LOG(LogTemp, Warning, TEXT("[Loot] 획득: %s"), *Data.Definition->ItemID.ToString());
 	}
 
 	return bSuccess;

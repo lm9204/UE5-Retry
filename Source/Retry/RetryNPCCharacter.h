@@ -34,6 +34,9 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	class UPersonalityComponent* PersonalityComponent;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components")
+	class UWeaponComponent* WeaponComponent;
+
 	// NPC 전용
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	class UAIPerceptionComponent* PerceptionComponent;

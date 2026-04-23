@@ -4,7 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
-#include "ItemTypes.h"
+#include "Items/ItemTypes.h"
 #include "InventoryComponent.generated.h"
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnInventoryChanged);
@@ -17,9 +17,9 @@ class RETRY_API UInventoryComponent : public UActorComponent
 public:	
 	UInventoryComponent();
 
-	// ── 외부 인터페이스 ──────────────────────────────────
+	// ── 외부 인터페이스 ──────────인터페이스────────────────────────
 	UFUNCTION(BlueprintCallable, Category = "Inventory")
-	bool AddItem(FItemData Item);
+	bool AddItem(FItemInstance Item);
 
 	UFUNCTION(BlueprintCallable, Category = "Inventory")
 	bool RemoveItem(FName ItemID);
@@ -30,6 +30,17 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Inventory")
 	bool UnEquipItem(ESlotType Slot);
 
+	UFUNCTION(BlueprintCallable, Category = "Inventory")
+	bool UseAmmo(FName AmmoItemID);
+
+	UFUNCTION(BlueprintPure, Category = "Inventory")
+	int32 GetTotalAmmoCount(FName AmmoItemID);
+	
+	FItemInstance* FindItemByID(FName ItemID);
+	
+	UFUNCTION(BlueprintPure, Category = "Inventory")
+	TArray<FItemInstance> GetAllItems() const { return Items; }
+	
 	UFUNCTION(BlueprintPure, Category = "Inventory")
 	float GetTotalArmorReduction() const;
 
@@ -40,16 +51,14 @@ public:
 	bool HasItem(FName ItemID) const;
 
 	UFUNCTION(BlueprintPure, Category = "Inventory")
-	TArray<FItemData> GetAllItems() const {	return Items; }
-
-	UFUNCTION(BlueprintPure, Category = "Inventory")
-	TMap<ESlotType, FItemData> GetEquippedItems() const { return EquippedItems; }
+	TMap<ESlotType, FItemInstance> GetEquippedItems() const { return EquippedItems; }
 
 	UFUNCTION(BlueprintPure, Category = "Inventory")
 	TArray<FEquippedItemSlot> GetEquippedSlots() const;
-	
-	FItemData* GetItemData(FName ItemID) const;
 
+	void ActivateItemFragment(FName ItemID, AActor* Owner);
+	void DeactivateItemFragment(FName ItemID, AActor* Owner);
+	
 	// ── Delegate ─────────────────────────────────────────
 	UPROPERTY(BlueprintAssignable, Category="Inventory|Events")
 	FOnInventoryChanged OnInventoryChanged;
@@ -66,12 +75,11 @@ protected:
 
 private:
 	UPROPERTY()
-	TArray<FItemData> Items;
+	TArray<FItemInstance> Items;
 
 	UPROPERTY()
-	TMap<ESlotType, FItemData> EquippedItems;
-
-	FItemData* FindItem(FName ItemID);
+	TMap<ESlotType, FItemInstance> EquippedItems;
+	
 	void ApplyWeightPenalty();
 	void RemoveItemInternal(FName ItemID);
 };

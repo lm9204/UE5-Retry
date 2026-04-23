@@ -2,7 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
-#include "Components/ItemTypes.h"
+#include "Items/ItemTypes.h"
 #include "Components/LootComponent.h"
 #include "LootWidget.generated.h"
 

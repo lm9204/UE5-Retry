@@ -16,11 +16,11 @@ class RETRY_API UInventoryWidget : public UUserWidget
 
 public:
 	UFUNCTION(BlueprintImplementableEvent, Category = "Inventory")
-	void RefreshInventory(const TArray<FItemData>& Items,
+	void RefreshInventory(const TArray<FItemInstance>& Items,
 						  const TArray<FEquippedItemSlot>& EquippedItems);
 
 	UFUNCTION(BlueprintImplementableEvent, Category = "Inventory")
-	void ShowToolTip(FItemData Item, FVector2D ScreenPosition);
+	void ShowToolTip(FItemInstance Item, FVector2D ScreenPosition);
 
 	UFUNCTION(BlueprintImplementableEvent, Category = "Inventory")
 	void HideToolTip();

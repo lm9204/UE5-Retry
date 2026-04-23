@@ -10,6 +10,7 @@
 #include "Components/CombatComponent.h"
 #include "Components/InventoryComponent.h"
 #include "Components/LootComponent.h"
+#include "Components/WeaponComponent.h"
 #include "Navigation/CrowdAgentInterface.h"
 #include "RetryCharacter.generated.h"
 
@@ -78,6 +79,9 @@ public:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components")
 	ULootComponent* LootComponent;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components")
+	UWeaponComponent* WeaponComponent;
 
 protected:
 

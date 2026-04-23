@@ -1,17 +1,13 @@
 
 #include "MyCheatManager.h"
 
-#include "IPropertyTable.h"
 #include "RetryNPCCharacter.h"
-#include "RetryNPCController.h"
 #include "Components/CombatComponent.h"
 #include "GameFramework/Character.h"
 #include "Components/HealthComponent.h"
 #include "Components/InventoryComponent.h"
 #include "Components/PersonalityComponent.h"
 #include "Kismet/GameplayStatics.h"
-#include "Perception/AIPerceptionComponent.h"
-#include "Perception/AIPerceptionSystem.h"
 
 void UMyCheatManager::DamageMe(float Amount)
 {
@@ -58,48 +54,19 @@ void UMyCheatManager::GiveItem(FString TypeName)
 	UInventoryComponent* Inv = GetInventory();
 	if (!Inv || !Inv->ItemDataTable) return;
 
-	EItemType TargetType;
-	if      (TypeName == "Armor")      TargetType = EItemType::Armor;
-	else if (TypeName == "Weapon")     TargetType = EItemType::Weapon;
-	else if (TypeName == "Consumable") TargetType = EItemType::Consumable;
-	else
+	UItemDefinition* Def = ItemDefinitionMap.FindRef(TypeName);
+	if (!Def)
 	{
-		// 타입 아니면 ID로 직접 조회
-		FItemData* Data = Inv->GetItemData(FName(*TypeName));
-		if (Data) Inv->AddItem(*Data);
-		else UE_LOG(LogTemp, Error, TEXT("[Cheat] 없는 아이템: %s"), *TypeName);
+		UE_LOG(LogTemp, Error, TEXT("[Cheat] ItemDefinition 없음: %s"), *TypeName);
 		return;
 	}
 
-	TArray<FItemData*> Rows;
-	Inv->ItemDataTable->GetAllRows<FItemData>(TEXT("GiveItem"), Rows);
+	FItemInstance Item;
+	Item.Definition = Def;
+	Item.StackCount = 1;
 
-	for (FItemData* Row : Rows)
-	{
-		if (Row->ItemType == TargetType)
-		{
-			Inv->AddItem(*Row);
-			UE_LOG(LogTemp, Warning, TEXT("[Cheat] 지급: %s"), *Row->ItemID.ToString());
-		}
-	}
-}
-
-void UMyCheatManager::GiveArmor(float Reduction)
-{
-	ACharacter* P = Cast<ACharacter>(GetOuterAPlayerController()->GetPawn());
-	if (!P) return;
-
-	UInventoryComponent* Inv = P->FindComponentByClass<UInventoryComponent>();
-	if (!Inv) return;
-
-	FItemData Armor;
-	Armor.ItemID			= FName("test_armor");
-	Armor.ItemType			= EItemType::Armor;
-	Armor.ArmorReduction	= FMath::Clamp(Reduction, 0.f, 0.8f);
-	Armor.Weight			= 5.f;
-
-	Inv->AddItem(Armor);
-	Inv->EquipItem(FName("test_armor"));
+	Inv->AddItem(Item);
+	UE_LOG(LogTemp, Warning, TEXT("[Cheat] 아이템 지급: %s"), *TypeName);
 }
 
 void UMyCheatManager::EquipItem(FName ItemID)
