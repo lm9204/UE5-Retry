@@ -53,6 +53,23 @@ struct FItemData : public FTableRowBase
 };
 
 USTRUCT(BlueprintType)
+struct FItemInstance
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	class UItemDefinition* Definition = nullptr;
+	
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	int32 StackCount = 1;
+	
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	float Durability = 1.f; // 0.0 ~ 1.0
+
+	bool IsValid() const { return Definition != nullptr; }
+};
+
+USTRUCT(BlueprintType)
 struct FEquippedItemSlot
 {
 	GENERATED_BODY();
@@ -61,5 +78,5 @@ struct FEquippedItemSlot
 	ESlotType Slot = ESlotType::None;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)
-	FItemData Item;
+	FItemInstance Item;
 };
