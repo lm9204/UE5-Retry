@@ -45,6 +45,9 @@ protected:
 	TObjectPtr<UInputAction> ClickMoveAction;
 
 	UPROPERTY(EditDefaultsOnly, Category="UI")
+	TSubclassOf<UUserWidget> PlayerHUDClass;
+	
+	UPROPERTY(EditDefaultsOnly, Category="UI")
 	TSubclassOf<UInventoryWidget> InventoryWidgetClass;
 
 	UPROPERTY(EditDefaultsOnly, Category="UI")
@@ -64,6 +67,9 @@ protected:
 
 	UPROPERTY()
 	ULootWidget* LootWidget;
+
+	UPROPERTY()
+	UUserWidget* PlayerHUDWidget;
 
 
 	/** Gameplay initialization */

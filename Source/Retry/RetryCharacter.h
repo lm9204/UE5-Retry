@@ -83,6 +83,12 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components")
 	UWeaponComponent* WeaponComponent;
 
+	UPROPERTY(VisibleAnywhere, Category="UI")
+	class UWidgetComponent* HealthBarWidget;
+
+	UPROPERTY(EditDefaultsOnly, Category="UI")
+	TSubclassOf<class UFloatingNameWidget> HealthBarWidgetClass;
+
 protected:
 
 	virtual void BeginPlay() override;
@@ -125,6 +131,9 @@ public:
 private:
 	UFUNCTION()
 	void OnDeath();
+
+	UFUNCTION()
+	void OnPlayerHealthChanged(float CurrentHP, float MaxHP);
 
 public:
 

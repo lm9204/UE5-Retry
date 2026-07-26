@@ -9,8 +9,10 @@
 #include "GameFramework/Controller.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
+#include "FloatingNameWidget.h"
 #include "InputActionValue.h"
 #include "Retry.h"
+#include "Components/WidgetComponent.h"
 #include "Navigation/CrowdManager.h"
 #include "Perception/AIPerceptionStimuliSourceComponent.h"
 #include "Perception/AISense_Sight.h"
@@ -57,8 +59,11 @@ ARetryCharacter::ARetryCharacter()
 	LootComponent = CreateDefaultSubobject<ULootComponent>(TEXT("LootComponent"));
 	WeaponComponent = CreateDefaultSubobject<UWeaponComponent>(TEXT("WeaponComponent"));
 
-	// Note: The skeletal mesh and anim blueprint references on the Mesh component (inherited from Character) 
-	// are set in the derived blueprint asset named ThirdPersonCharacter (to avoid direct content references in C++)
+	HealthBarWidget = CreateDefaultSubobject<UWidgetComponent>(TEXT("HealthBarWidget"));
+	HealthBarWidget->SetupAttachment(RootComponent);
+	HealthBarWidget->SetRelativeLocation(FVector(0.f, 0.f, 100.f));
+	HealthBarWidget->SetWidgetSpace(EWidgetSpace::Screen);
+	HealthBarWidget->SetDrawSize(FVector2D(150.f, 40.f));
 }
 
 void ARetryCharacter::BeginPlay()
@@ -66,7 +71,27 @@ void ARetryCharacter::BeginPlay()
 	Super::BeginPlay();
 
 	SetActorRotation(FRotator(0.f, 45.f, 0.f));
+	if (HealthBarWidgetClass)
+	{
+		HealthBarWidget->SetWidgetClass(HealthBarWidgetClass);
+
+		if (UFloatingNameWidget* Widget =
+			Cast<UFloatingNameWidget>(HealthBarWidget->GetUserWidgetObject()))
+		{
+			Widget->SetNameText(TEXT("Player"));  // 이름 비워도 됨
+			Widget->SetHPPercent(1.f);      // 이거 호출 안 하면 HPBar가 초기 이상값일 수 있음
+		}
+		
+		UE_LOG(LogTemp, Warning, TEXT("[Player] HealthBarWidget 클래스 설정: %s"),
+			*HealthBarWidgetClass->GetName());
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("[Player] HealthBarWidgetClass NULL"));
+	}
+	
 	HealthComponent->OnDeath.AddDynamic(this, &ARetryCharacter::OnDeath);
+	HealthComponent->OnHealthChanged.AddDynamic(this, &ARetryCharacter::OnPlayerHealthChanged);
 
 	if (UCrowdManager* CrowdManager = UCrowdManager::GetCurrent(GetWorld()))
 	{
@@ -110,7 +135,7 @@ void ARetryCharacter::Tick(float DeltaTime)
 			if (!Direction.IsNearlyZero())
 			{
 				SetActorRotation(Direction.Rotation());
-				WeaponComponent->SetAimTarget(HitResult.Location);
+				WeaponComponent->SetAimTarget(HitResult.Location + FVector(0, 0, 60.f));
 			}
 		}
 		
@@ -230,4 +255,13 @@ void ARetryCharacter::OnDeath()
 
 	GetMesh()->SetCollisionProfileName(TEXT("Ragdoll"));
 	GetMesh()->SetSimulatePhysics(true);
+}
+
+void ARetryCharacter::OnPlayerHealthChanged(float CurrentHP, float MaxHP)
+{
+	if (UFloatingNameWidget* Widget =
+		Cast<UFloatingNameWidget>(HealthBarWidget->GetUserWidgetObject()))
+	{
+		Widget->SetHPPercent(CurrentHP / MaxHP);
+	}
 }
