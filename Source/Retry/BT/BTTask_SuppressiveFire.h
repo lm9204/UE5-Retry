@@ -4,29 +4,28 @@
 
 #include "CoreMinimal.h"
 #include "BehaviorTree/BTTaskNode.h"
-#include "BTTask_FireAtTarget.generated.h"
+#include "BTTask_SuppressiveFire.generated.h"
 
 /**
  * 
  */
 UCLASS()
-class RETRY_API UBTTask_FireAtTarget : public UBTTaskNode
+class RETRY_API UBTTask_SuppressiveFire : public UBTTaskNode
 {
 	GENERATED_BODY()
 
+
 public:
-	UBTTask_FireAtTarget();
-
-	//사격 사거리
-	UPROPERTY(EditAnywhere, Category="Combat")
-	float OptimalRange = 600.f;
+	UBTTask_SuppressiveFire();
 
 	UPROPERTY(EditAnywhere, Category="Combat")
-	float AimTime = 0.3f;
+	float SpreadAngle = 10.f;
+
+	UPROPERTY(EditAnywhere, Category="Combat")
+	int32 BurstCount = 5;
 	
 protected:
 	virtual EBTNodeResult::Type ExecuteTask(
-		UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory) override;
-
-
+		UBehaviorTreeComponent& OwnerComp,
+		uint8* NodeMemory) override;
 };

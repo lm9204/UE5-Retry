@@ -1,7 +1,7 @@
 // Fill out your copyright notice in the Description page of Project Settings.
 
 
-#include "BT/BTTask_FireAtTarget.h"
+#include "BT/BTTask_SuppressiveFire.h"
 
 #include "AIController.h"
 #include "BehaviorTree/BlackboardComponent.h"
@@ -9,13 +9,12 @@
 #include "Components/WeaponComponent.h"
 #include "GameFramework/Character.h"
 
-UBTTask_FireAtTarget::UBTTask_FireAtTarget()
+UBTTask_SuppressiveFire::UBTTask_SuppressiveFire()
 {
-	NodeName = TEXT("Fire At Target");
-
+	NodeName = TEXT("Suppressive Fire");
 }
 
-EBTNodeResult::Type UBTTask_FireAtTarget::ExecuteTask(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory)
+EBTNodeResult::Type UBTTask_SuppressiveFire::ExecuteTask(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory)
 {
 	AAIController* AIC = OwnerComp.GetAIOwner();
 	if (!AIC) return EBTNodeResult::Failed;
@@ -24,16 +23,13 @@ EBTNodeResult::Type UBTTask_FireAtTarget::ExecuteTask(UBehaviorTreeComponent& Ow
 	if (!NPC) return EBTNodeResult::Failed;
 
 	UBlackboardComponent* BB = OwnerComp.GetBlackboardComponent();
-	if (!BB) return EBTNodeResult::Failed;
-
 	AActor* Target = Cast<AActor>(
 		BB->GetValueAsObject(TEXT("TargetActor")));
 	if (!Target) return EBTNodeResult::Failed;
 
-	// 탄약 없으면 실패 -> Reload로 넘어감
 	UWeaponComponent* WC = NPC->FindComponentByClass<UWeaponComponent>();
 	if (!WC || WC->GetCurrentAmmo() <= 0)
-			return EBTNodeResult::Failed;
+		return EBTNodeResult::Failed;
 
 	if (UHealthComponent* TargetHC = Target->FindComponentByClass<UHealthComponent>())
 	{
@@ -45,12 +41,18 @@ EBTNodeResult::Type UBTTask_FireAtTarget::ExecuteTask(UBehaviorTreeComponent& Ow
 	FVector ToTarget = Target->GetActorLocation() - NPC->GetActorLocation();
 	ToTarget.Z = 0.f;
 	FRotator LookAtRotation = ToTarget.Rotation();
+	
+	// 제압 사격 - 조준 위치에 랜덤 스프레드 추가
+	for (int32 i = 0; i < BurstCount; ++i)
+	{
+		FVector Spread = FVector(
+			FMath::RandRange(-SpreadAngle, SpreadAngle),
+			FMath::RandRange(-SpreadAngle, SpreadAngle),
+			0.f);
 
-	NPC->SetActorRotation(LookAtRotation);   // 즉시 회전 (스냅)
+		WC->SetAimTarget(Target->GetActorLocation() + FVector(0, 0, 60.f));
+		WC->Fire();
+	}
 
-	// WeaponComponent에 조준 위치 설정 후 발사
-	WC->SetAimTarget(Target->GetActorLocation() + FVector(0, 0, 60.f));
-	WC->Fire();
-		
 	return EBTNodeResult::Succeeded;
 }

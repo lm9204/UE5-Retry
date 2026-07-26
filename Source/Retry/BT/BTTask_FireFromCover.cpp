@@ -1,7 +1,7 @@
 // Fill out your copyright notice in the Description page of Project Settings.
 
 
-#include "BT/BTTask_FireAtTarget.h"
+#include "BT/BTTask_FireFromCover.h"
 
 #include "AIController.h"
 #include "BehaviorTree/BlackboardComponent.h"
@@ -9,13 +9,12 @@
 #include "Components/WeaponComponent.h"
 #include "GameFramework/Character.h"
 
-UBTTask_FireAtTarget::UBTTask_FireAtTarget()
+UBTTask_FireFromCover::UBTTask_FireFromCover()
 {
-	NodeName = TEXT("Fire At Target");
-
+	NodeName = TEXT("Fire From Cover");
 }
 
-EBTNodeResult::Type UBTTask_FireAtTarget::ExecuteTask(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory)
+EBTNodeResult::Type UBTTask_FireFromCover::ExecuteTask(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory)
 {
 	AAIController* AIC = OwnerComp.GetAIOwner();
 	if (!AIC) return EBTNodeResult::Failed;
@@ -24,13 +23,10 @@ EBTNodeResult::Type UBTTask_FireAtTarget::ExecuteTask(UBehaviorTreeComponent& Ow
 	if (!NPC) return EBTNodeResult::Failed;
 
 	UBlackboardComponent* BB = OwnerComp.GetBlackboardComponent();
-	if (!BB) return EBTNodeResult::Failed;
-
 	AActor* Target = Cast<AActor>(
 		BB->GetValueAsObject(TEXT("TargetActor")));
 	if (!Target) return EBTNodeResult::Failed;
 
-	// 탄약 없으면 실패 -> Reload로 넘어감
 	UWeaponComponent* WC = NPC->FindComponentByClass<UWeaponComponent>();
 	if (!WC || WC->GetCurrentAmmo() <= 0)
 			return EBTNodeResult::Failed;
@@ -45,12 +41,11 @@ EBTNodeResult::Type UBTTask_FireAtTarget::ExecuteTask(UBehaviorTreeComponent& Ow
 	FVector ToTarget = Target->GetActorLocation() - NPC->GetActorLocation();
 	ToTarget.Z = 0.f;
 	FRotator LookAtRotation = ToTarget.Rotation();
-
-	NPC->SetActorRotation(LookAtRotation);   // 즉시 회전 (스냅)
-
-	// WeaponComponent에 조준 위치 설정 후 발사
+	
 	WC->SetAimTarget(Target->GetActorLocation() + FVector(0, 0, 60.f));
-	WC->Fire();
-		
+
+	for (int32 i = 0; i < ShotsPerPeek; ++i)
+		WC->Fire();
+
 	return EBTNodeResult::Succeeded;
 }

@@ -4,19 +4,25 @@
 
 #include "CoreMinimal.h"
 #include "BehaviorTree/BTService.h"
-#include "BTService_UpdatePersonality.generated.h"
+#include "BTService_UpdatePerception.generated.h"
 
 /**
  * 
  */
 UCLASS()
-class RETRY_API UBTService_UpdatePersonality : public UBTService
+class RETRY_API UBTService_UpdatePerception : public UBTService
 {
 	GENERATED_BODY()
 
 public:
-	UBTService_UpdatePersonality();
+	UBTService_UpdatePerception();
 
+	UPROPERTY(EditAnywhere, Category="Perception")
+	float SightRange = 1500.f;
+
+	UPROPERTY(EditAnywhere, Category="Perception")
+	float HearingRange = 800.f;
+	
 protected:
 	virtual void TickNode(UBehaviorTreeComponent& OwnerComp,
 		uint8* NodeMemory, float DeltaSeconds) override;
