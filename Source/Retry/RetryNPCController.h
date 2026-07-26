@@ -1,14 +1,11 @@
-// Fill out your copyright notice in the Description page of Project Settings.
-
 #pragma once
 
 #include "CoreMinimal.h"
 #include "AIController.h"
+#include "RetryNPCCharacter.h"
+#include "Perception/AIPerceptionTypes.h"
 #include "RetryNPCController.generated.h"
 
-/**
- * 
- */
 UCLASS()
 class RETRY_API ARetryNPCController : public AAIController
 {
@@ -19,12 +16,29 @@ public:
 
 	virtual FGenericTeamId GetGenericTeamId() const override
 	{
-		return FGenericTeamId(1);
+		if (ARetryNPCCharacter* NPC = Cast<ARetryNPCCharacter>(GetPawn()))
+			return FGenericTeamId(NPC->TeamID);
+		return FGenericTeamId(2);
 	}
 
 	UPROPERTY(EditDefaultsOnly, Category="AI")
 	class UBehaviorTree* BehaviorTreeAsset;
 
+	UPROPERTY(VisibleAnywhere, Category="AI")
+	class UNPCDecisionComponent* DecisionComponent;
+
+	UPROPERTY()
+	AActor* LastPerceivedActor = nullptr;
+
+	float LastPerceptionTime = 0.f;
+	float LastLostTime = 0.f;
+
 protected:
 	virtual void OnPossess(APawn* InPawn) override;
+	virtual void OnUnPossess() override;
+	virtual ETeamAttitude::Type GetTeamAttitudeTowards(const AActor& Other) const override;
+
+private:
+	UFUNCTION()
+	void OnTargetPerceptionUpdated(AActor* Actor, FAIStimulus Stimulus);
 };
