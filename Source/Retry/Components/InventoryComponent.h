@@ -66,9 +66,6 @@ public:
 	// ── 디자이너 설정값 ──────────────────────────────────
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Inventory")
 	float MaxWeight = 30.f;
-
-	UPROPERTY(EditDefaultsOnly, Category="Inventory")
-	UDataTable* ItemDataTable;
 	
 protected:
 	virtual void BeginPlay() override;

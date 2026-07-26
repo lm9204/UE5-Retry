@@ -26,6 +26,9 @@ public:
 
 	UFUNCTION(Exec)
 	void GiveItem(FString TypeName);
+
+	UFUNCTION(BlueprintCallable, Category="Cheat")
+	void GiveItemToActor(AActor* TargetActor, FString TypeName, int32 Count = 1);
 	
 	UFUNCTION(Exec)
 	void EquipItem(FName ItemID);
@@ -41,6 +44,9 @@ public:
 	
 	UFUNCTION(Exec)
 	void SpawnNPC(FString PersonalityType);
+
+	UFUNCTION(Exec)
+	void ToggleAIDebug();
 
 	UPROPERTY(EditDefaultsOnly, Category="Cheat")
 	TSubclassOf<ARetryNPCCharacter> NPCCharacterClass;

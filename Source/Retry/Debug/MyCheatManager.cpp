@@ -2,6 +2,8 @@
 #include "MyCheatManager.h"
 
 #include "RetryNPCCharacter.h"
+#include "RetryNPCController.h"
+#include "Components/NPCDecisionComponent.h"
 #include "Components/CombatComponent.h"
 #include "GameFramework/Character.h"
 #include "Components/HealthComponent.h"
@@ -49,24 +51,40 @@ void UMyCheatManager::TestAttack()
 	CC->Attack();
 }
 
+// 기존 GiveItem은 그대로 두고 내부에서 재사용하도록 리팩토링
 void UMyCheatManager::GiveItem(FString TypeName)
 {
-	UInventoryComponent* Inv = GetInventory();
-	if (!Inv || !Inv->ItemDataTable) return;
+	APawn* Player = GetOuterAPlayerController()->GetPawn();
+	if (!Player) return;
+
+	GiveItemToActor(Player, TypeName, 1);
+}
+
+void UMyCheatManager::GiveItemToActor(
+	AActor* TargetActor, FString TypeName, int32 Count)
+{
+	if (!TargetActor) return;
+
+	UInventoryComponent* Inv =
+		TargetActor->FindComponentByClass<UInventoryComponent>();
+	if (!Inv) return;
 
 	UItemDefinition* Def = ItemDefinitionMap.FindRef(TypeName);
 	if (!Def)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[Cheat] ItemDefinition 없음: %s"), *TypeName);
+		UE_LOG(LogTemp, Error,
+			TEXT("[Cheat] ItemDefinition 없음: %s"), *TypeName);
 		return;
 	}
 
 	FItemInstance Item;
 	Item.Definition = Def;
-	Item.StackCount = 1;
+	Item.StackCount = Count;
 
 	Inv->AddItem(Item);
-	UE_LOG(LogTemp, Warning, TEXT("[Cheat] 아이템 지급: %s"), *TypeName);
+	UE_LOG(LogTemp, Warning,
+		TEXT("[Cheat] %s에게 아이템 지급: %s x%d"),
+		*TargetActor->GetName(), *TypeName, Count);
 }
 
 void UMyCheatManager::EquipItem(FName ItemID)
@@ -213,4 +231,29 @@ void UMyCheatManager::SpawnNPC(FString PersonalityType)
 	NPC->NPCName = PersonalityType;
 	
 	UE_LOG(LogTemp, Warning, TEXT("[Cheat] NPC 스폰: %s"), *PersonalityType);
+}
+
+void UMyCheatManager::ToggleAIDebug()
+{
+	TArray<AActor*> NPCs;
+	UGameplayStatics::GetAllActorsOfClass(
+		GetWorld(), ARetryNPCCharacter::StaticClass(), NPCs);
+
+	for (AActor* Actor : NPCs)
+	{
+		ARetryNPCCharacter* NPC = Cast<ARetryNPCCharacter>(Actor);
+		if (!NPC) continue;
+
+		ARetryNPCController* Controller =
+			Cast<ARetryNPCController>(NPC->GetController());
+		if (!Controller || !Controller->DecisionComponent) continue;
+
+		Controller->DecisionComponent->bDebugEnabled =
+			!Controller->DecisionComponent->bDebugEnabled;
+
+		NPC->AIDebugWidget->SetVisibility(
+			Controller->DecisionComponent->bDebugEnabled);
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("[Cheat] AI Debug UI 토글"));
 }
