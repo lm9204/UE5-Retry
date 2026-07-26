@@ -11,37 +11,39 @@
 #include "Components/InventoryComponent.h"
 #include "Components/PersonalityComponent.h"
 #include "Components/WeaponComponent.h"
-#include "Components/Widget.h"
 #include "Components/WidgetComponent.h"
+#include "Debug/AIDebugWidget.h"
 #include "GameFramework/CharacterMovementComponent.h"
-#include "Perception/AIPerceptionComponent.h"
-#include "Perception/AISenseConfig_Sight.h"
+#include "Items/ItemDefinition.h"
+#include "Debug/MyCheatManager.h"
+#include "Kismet/GameplayStatics.h"
 
 // Sets default values
 ARetryNPCCharacter::ARetryNPCCharacter()
 {
+	bUseControllerRotationYaw = true;
+	GetCharacterMovement()->bOrientRotationToMovement = false;
+	
 	// 공유 컴포넌트
 	HealthComponent = CreateDefaultSubobject<UHealthComponent>(TEXT("HealthComponent"));
 	CombatComponent = CreateDefaultSubobject<UCombatComponent>(TEXT("CombatComponent"));
 	InventoryComponent = CreateDefaultSubobject<UInventoryComponent>(TEXT("InventoryComponent"));
 	PersonalityComponent = CreateDefaultSubobject<UPersonalityComponent>(TEXT("PersonalityComponent"));
 	WeaponComponent = CreateDefaultSubobject<UWeaponComponent>(TEXT("WeaponComponent"));
-
-	// AI Perception
-	PerceptionComponent = CreateDefaultSubobject<UAIPerceptionComponent>(TEXT("PerceptionComponent"));
-	UAISenseConfig_Sight* SightConfig = CreateDefaultSubobject<UAISenseConfig_Sight>(TEXT("SightConfig"));
-	SightConfig->SightRadius = 1500.f;
-	SightConfig->LoseSightRadius = 2000.f;
-	SightConfig->PeripheralVisionAngleDegrees = 90.f;
-	SightConfig->DetectionByAffiliation.bDetectEnemies = true;
-	SightConfig->DetectionByAffiliation.bDetectNeutrals = true;
-	PerceptionComponent->ConfigureSense(*SightConfig);
-
+	
 	//이름표 위젯
 	NameplateWidget = CreateDefaultSubobject<UWidgetComponent>(TEXT("NameplateWidget"));
 	NameplateWidget->SetupAttachment(RootComponent);
 	NameplateWidget->SetRelativeLocation(FVector(0.f, 0.f, 100.f));
 	NameplateWidget->SetWidgetSpace(EWidgetSpace::Screen);
+
+	// AIDebug Widget
+	AIDebugWidget = CreateDefaultSubobject<UWidgetComponent>(
+	TEXT("AIDebugWidget"));
+	AIDebugWidget->SetupAttachment(RootComponent);
+	AIDebugWidget->SetRelativeLocation(FVector(0.f, 0.f, 50.f));
+	AIDebugWidget->SetWidgetSpace(EWidgetSpace::Screen);
+	AIDebugWidget->SetVisibility(false);
 }
 
 // Called when the game starts or when spawned
@@ -55,18 +57,6 @@ void ARetryNPCCharacter::BeginPlay()
 	HealthComponent->OnDeath.AddDynamic(this, &ARetryNPCCharacter::OnDeath);
 	HealthComponent->OnHealthChanged.AddDynamic(this, &ARetryNPCCharacter::OnHealthChanged);
 
-	// Perception 바인딩
-	if (PerceptionComponent)
-	{
-		PerceptionComponent->OnTargetPerceptionUpdated.AddDynamic(
-			this, &ARetryNPCCharacter::OnTargetPerceptionUpdated);
-		UE_LOG(LogTemp, Warning, TEXT("[NPC] Perception 바인딩 완료"));
-	}
-	else
-	{
-		UE_LOG(LogTemp, Error, TEXT("[NPC] PerceptionComponent 없음"));
-	}
-
 	// FloatingName 설정
 	if (FloatingNameWidgetClass)
 	{
@@ -77,6 +67,36 @@ void ARetryNPCCharacter::BeginPlay()
 		{
 			Widget->SetNameText(NPCName);
 			Widget->SetHPPercent(1.f);
+		}
+	}
+
+	// AIDebug Widget
+	if (AIDebugWidgetClass)
+	{
+		AIDebugWidget->SetWidgetClass(AIDebugWidgetClass);
+	}
+
+	APlayerController* PC =
+		UGameplayStatics::GetPlayerController(this, 0);
+	if (PC)
+	{
+		if (UMyCheatManager* CM =
+			Cast<UMyCheatManager>(PC->CheatManager))
+		{
+			if (!DefaultWeapon.IsEmpty())
+			{
+				CM->GiveItemToActor(this, DefaultWeapon, 1);
+				InventoryComponent->EquipItem("m16a4");
+			}
+
+			if (!DefaultAmmo.IsEmpty())
+			{
+				CM->GiveItemToActor(this, DefaultAmmo,90);
+				CM->GiveItemToActor(this, DefaultAmmo,90);
+				CM->GiveItemToActor(this, DefaultAmmo,90);
+				InventoryComponent->EquipItem("ammo_556");
+			}
+			
 		}
 	}
 }
@@ -104,24 +124,5 @@ void ARetryNPCCharacter::OnHealthChanged(float CurrentHP, float MaxHP)
 		Cast<UFloatingNameWidget>(NameplateWidget->GetUserWidgetObject()))
 	{
 		Widget->SetHPPercent(CurrentHP / MaxHP);
-	}
-}
-
-void ARetryNPCCharacter::OnTargetPerceptionUpdated(AActor* Actor, FAIStimulus Stimulus)
-{
-	if (AAIController* AIC = Cast<AAIController>(GetController()))
-	{
-		if (UBlackboardComponent* BB = AIC->GetBlackboardComponent())
-		{
-			if (Stimulus.WasSuccessfullySensed())
-			{
-				BB->SetValueAsObject(TEXT("TargetActor"), Actor);
-				UE_LOG(LogTemp, Warning, TEXT("[NPC] 적 감지: %s"), *Actor->GetName());
-			}
-			else
-			{
-				BB->ClearValue(TEXT("TargetActor"));
-			}
-		}
 	}
 }

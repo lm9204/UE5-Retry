@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "GenericTeamAgentInterface.h"
 #include "GameFramework/Character.h"
+#include "Components/WidgetComponent.h"
 #include "RetryNPCCharacter.generated.h"
 
 UCLASS()
@@ -17,9 +18,12 @@ public:
 	// Sets default values for this character's properties
 	ARetryNPCCharacter();
 
+	UPROPERTY(EditAnywhere, Category="Team")
+	uint8 TeamID = 2;
+
 	virtual FGenericTeamId GetGenericTeamId() const override
 	{
-		return FGenericTeamId(1);
+		return FGenericTeamId(TeamID);
 	}
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
@@ -37,18 +41,29 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components")
 	class UWeaponComponent* WeaponComponent;
 
-	// NPC 전용
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
-	class UAIPerceptionComponent* PerceptionComponent;
-
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	class UWidgetComponent* NameplateWidget;
+
+	UPROPERTY(EditInstanceOnly, Category="Patrol")
+	TArray<AActor*> PatrolPoints;
 
 	UPROPERTY(EditDefaultsOnly, Category="UI")
 	TSubclassOf<class UFloatingNameWidget> FloatingNameWidgetClass;
 
 	UPROPERTY(EditAnywhere, Category = "UI")
 	FString NPCName = TEXT("NPC");
+
+	UPROPERTY(VisibleAnywhere, Category="Debug")
+	class UWidgetComponent* AIDebugWidget;
+
+	UPROPERTY(EditDefaultsOnly, Category="Debug")
+	TSubclassOf<class UAIDebugWidget> AIDebugWidgetClass;
+
+	UPROPERTY(EditDefaultsOnly, Category="Weapon")
+	FString DefaultWeapon;
+
+	UPROPERTY(EditDefaultsOnly, Category="Weapon")
+	FString DefaultAmmo;
 
 protected:
 	// Called when the game starts or when spawned
@@ -60,8 +75,5 @@ public:
 
 	UFUNCTION()
 	void OnHealthChanged(float CurrentHP, float MaxHP);
-
-	UFUNCTION()
-	void OnTargetPerceptionUpdated(AActor* Actor, FAIStimulus Stimulus);
 
 };
