@@ -123,7 +123,7 @@ void UWeaponComponent::Reload()
 	if (CurrentAmmo == CurrentWeaponData->MagSize) return;
 	if (ReserveAmmo <= 0)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[Weapon] 탄약 없음 재장전 미완료."));
+		// UE_LOG(LogTemp, Warning, TEXT("[Weapon] 탄약 없음 재장전 미완료."));
 		return;
 	}
 
@@ -159,7 +159,11 @@ void UWeaponComponent::Reload()
 
 void UWeaponComponent::FireOnce()
 {
-	if (!CurrentWeaponData) return;
+	if (!CurrentWeaponData)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Weapon:FireOnce] 총없음."));
+		return;
+	}
 
 	UE_LOG(LogTemp, Warning, TEXT("[Weapon:FireOnce] 탄약상태:%d."), CurrentAmmo);
 	if (CurrentAmmo <= 0)
@@ -200,7 +204,7 @@ void UWeaponComponent::SpawnProjectile()
 		CurrentWeaponData->MuzzleSocketName);
 	
 	FVector Target = CachedAimTarget;
-	Target.Z = MuzzleLocation.Z;
+	// Target.Z = MuzzleLocation.Z;
 
 	FVector Direction = (Target - MuzzleLocation).GetSafeNormal();
 	FRotator SpawnRotation = Direction.Rotation();

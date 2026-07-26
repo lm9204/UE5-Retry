@@ -74,7 +74,7 @@ private:
 	class USkeletalMeshComponent* WeaponMeshComp = nullptr;
 
 	FVector CachedAimTarget = FVector::ZeroVector;
-
+	float LastFireTime = 0.f;
 	int32 CurrentAmmo = 0;
 	int32 ReserveAmmo = 0; //예비 탄약
 	int32 MaxReserveAmmo = 90; //최대 예비 탄약
