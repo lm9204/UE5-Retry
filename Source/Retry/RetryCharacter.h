@@ -83,6 +83,22 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components")
 	UWeaponComponent* WeaponComponent;
 
+	/** 적을 조준할 때 캡슐 중심으로부터 위로 얼마나 올려서 조준할지 (캡슐 HalfHeight 대비 비율) */
+	UPROPERTY(EditAnywhere, Category="Combat")
+	float EnemyAimHeightRatio = 0.6f;
+
+	/** 바닥/벽 등 적이 아닌 곳을 조준할 때의 고정 높이 오프셋 */
+	UPROPERTY(EditAnywhere, Category="Combat")
+	float GroundAimHeightOffset = 60.f;
+
+	/** Hit Reaction */
+	UPROPERTY(EditDefaultsOnly, Category="Combat")
+	class UAnimMontage* HitMontage;
+
+	UPROPERTY()
+	bool bIsStaggered = false;
+
+	/** Health Bar */
 	UPROPERTY(VisibleAnywhere, Category="UI")
 	class UWidgetComponent* HealthBarWidget;
 
@@ -121,6 +137,13 @@ public:
 	/** Handles jump pressed inputs from either controls or UI interfaces */
 	UFUNCTION(BlueprintCallable, Category="Input")
 	virtual void DoJumpEnd();
+
+	/** Hit Reaction */
+	UFUNCTION()
+	void PlayHitReaction(FDamageInfo Info);
+
+	UFUNCTION()
+	void OnHitMontageEnded(UAnimMontage* Montage, bool bInterrupted);
 
 	virtual FVector GetCrowdAgentLocation() const override;
 	virtual FVector GetCrowdAgentVelocity() const override;

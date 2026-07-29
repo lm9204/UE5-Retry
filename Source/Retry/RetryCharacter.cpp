@@ -12,6 +12,8 @@
 #include "FloatingNameWidget.h"
 #include "InputActionValue.h"
 #include "Retry.h"
+#include "RetryNPCCharacter.h"
+#include "Debug/CombatLogging.h"
 #include "Components/WidgetComponent.h"
 #include "Navigation/CrowdManager.h"
 #include "Perception/AIPerceptionStimuliSourceComponent.h"
@@ -61,7 +63,7 @@ ARetryCharacter::ARetryCharacter()
 
 	HealthBarWidget = CreateDefaultSubobject<UWidgetComponent>(TEXT("HealthBarWidget"));
 	HealthBarWidget->SetupAttachment(RootComponent);
-	HealthBarWidget->SetRelativeLocation(FVector(0.f, 0.f, 100.f));
+	HealthBarWidget->SetRelativeLocation(FVector(0.f, 0.f, 150.f));
 	HealthBarWidget->SetWidgetSpace(EWidgetSpace::Screen);
 	HealthBarWidget->SetDrawSize(FVector2D(150.f, 40.f));
 }
@@ -82,17 +84,24 @@ void ARetryCharacter::BeginPlay()
 			Widget->SetHPPercent(1.f);      // 이거 호출 안 하면 HPBar가 초기 이상값일 수 있음
 		}
 		
-		UE_LOG(LogTemp, Warning, TEXT("[Player] HealthBarWidget 클래스 설정: %s"),
-			*HealthBarWidgetClass->GetName());
+		UE_LOG(LogTemp, Warning, TEXT("[Player] %s HealthBarWidget 클래스 설정: %s"),
+			*GetCombatLogName(this), *HealthBarWidgetClass->GetName());
 	}
 	else
 	{
-		UE_LOG(LogTemp, Error, TEXT("[Player] HealthBarWidgetClass NULL"));
+		UE_LOG(LogTemp, Error, TEXT("[Player] %s HealthBarWidgetClass NULL"), *GetCombatLogName(this));
 	}
 	
 	HealthComponent->OnDeath.AddDynamic(this, &ARetryCharacter::OnDeath);
 	HealthComponent->OnHealthChanged.AddDynamic(this, &ARetryCharacter::OnPlayerHealthChanged);
+	HealthComponent->OnHitReaction.AddDynamic(this, &ARetryCharacter::PlayHitReaction);
 
+	// HitReaction 설정
+	if (UAnimInstance* AnimInst = GetMesh()->GetAnimInstance())
+	{
+		AnimInst->OnMontageEnded.AddDynamic(this, &ARetryCharacter::OnHitMontageEnded);
+	}
+	
 	if (UCrowdManager* CrowdManager = UCrowdManager::GetCurrent(GetWorld()))
 	{
 		CrowdManager->RegisterAgent(this);
@@ -124,21 +133,32 @@ void ARetryCharacter::Tick(float DeltaTime)
 	if (PC->IsInputKeyDown(EKeys::RightMouseButton))
 	{
 		// 우클릭 시 마우스 바라보기
+		// ECC_Visibility는 Pawn(캡슐) 콜리전 프로필이 기본적으로 Ignore 처리하기 때문에
+		// 적을 그냥 통과해서 바닥에 꽂힌다. 적을 우선적으로 잡아내려면 ECC_Pawn으로 트레이스해야 한다.
 		FHitResult HitResult;
-		PC->GetHitResultUnderCursor(ECC_Visibility, false, HitResult);
+		PC->GetHitResultUnderCursor(ECC_Pawn, false, HitResult);
 
 		if (HitResult.bBlockingHit)
 		{
-			FVector Direction = HitResult.Location - GetActorLocation();
+			FVector AimPoint = HitResult.Location + FVector(0, 0, GroundAimHeightOffset);
+
+			if (ARetryNPCCharacter* HitNPC = Cast<ARetryNPCCharacter>(HitResult.GetActor()))
+			{
+				// 적을 맞췄다면 클릭한 지점이 아니라 적의 상체/머리 라인으로 조준점을 스냅
+				const float HalfHeight = HitNPC->GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
+				AimPoint = HitNPC->GetActorLocation() + FVector(0, 0, HalfHeight * EnemyAimHeightRatio);
+			}
+
+			FVector Direction = AimPoint - GetActorLocation();
 			Direction.Z = 0.f;
 
 			if (!Direction.IsNearlyZero())
 			{
 				SetActorRotation(Direction.Rotation());
-				WeaponComponent->SetAimTarget(HitResult.Location + FVector(0, 0, 60.f));
+				WeaponComponent->SetAimTarget(AimPoint);
 			}
 		}
-		
+
 		WeaponComponent->StartAim();
 	}
 	else
@@ -166,7 +186,7 @@ void ARetryCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComp
 	}
 	else
 	{
-		UE_LOG(LogRetry, Error, TEXT("'%s' Failed to find an Enhanced Input component! This template is built to use the Enhanced Input system. If you intend to use the legacy system, then you will need to update this C++ file."), *GetNameSafe(this));
+		UE_LOG(LogRetry, Error, TEXT("'%s' Failed to find an Enhanced Input component! This template is built to use the Enhanced Input system. If you intend to use the legacy system, then you will need to update this C++ file."), *GetCombatLogName(this));
 	}
 }
 
@@ -263,5 +283,24 @@ void ARetryCharacter::OnPlayerHealthChanged(float CurrentHP, float MaxHP)
 		Cast<UFloatingNameWidget>(HealthBarWidget->GetUserWidgetObject()))
 	{
 		Widget->SetHPPercent(CurrentHP / MaxHP);
+	}
+}
+
+void ARetryCharacter::PlayHitReaction(FDamageInfo Info)
+{
+	if (!HitMontage) return;
+
+	if (UAnimInstance* AnimInst = GetMesh()->GetAnimInstance())
+	{
+		bIsStaggered = true;
+		AnimInst->Montage_Play(HitMontage);
+	}
+}
+
+void ARetryCharacter::OnHitMontageEnded(UAnimMontage* Montage, bool bInterrupted)
+{
+	if (Montage == HitMontage)
+	{
+		bIsStaggered = false;
 	}
 }

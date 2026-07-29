@@ -3,6 +3,7 @@
 
 #include "HealthComponent.h"
 #include "Actor/DroppedItemActor.h"
+#include "Debug/CombatLogging.h"
 #include "InventoryComponent.h"
 
 // Sets default values for this component's properties
@@ -19,9 +20,10 @@ void UHealthComponent::TakeDamage(FDamageInfo Info)
 	CurrentHealth = FMath::Clamp(CurrentHealth - Final, 0.f, MaxHealth);
 
 	OnHealthChanged.Broadcast(CurrentHealth, MaxHealth);
+	OnHitReaction.Broadcast(Info);
 
-	UE_LOG(LogTemp, Warning, TEXT("[Health] TakeDamage: %.1f -> Final: %1.f -> HP: %.1f"),
-		Info.BaseDamage, Final, CurrentHealth);
+	UE_LOG(LogTemp, Warning, TEXT("[Health] %s TakeDamage: %.1f -> Final: %1.f -> HP: %.1f"),
+		*GetCombatLogName(GetOwner()), Info.BaseDamage, Final, CurrentHealth);
 
 	if (CurrentHealth <= 0.f)
 		HandleDeath();
@@ -76,7 +78,7 @@ void UHealthComponent::HandleDeath()
 	
 	OnDeath.Broadcast();
 
-	UE_LOG(LogTemp, Warning, TEXT("[Health] %s is Dead!"), *GetOwner()->GetName());
+	UE_LOG(LogTemp, Warning, TEXT("[Health] %s is Dead!"), *GetCombatLogName(GetOwner()));
 }
 
 float UHealthComponent::CalculateFinalDamage(float BaseDamage) const

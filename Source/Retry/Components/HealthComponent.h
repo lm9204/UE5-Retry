@@ -9,6 +9,7 @@
 
 // 델리게이트 타입선언
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnDeath);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnHitReaction, FDamageInfo, Info);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnHealthChanged, float, CurrentHealth, float, MaxHealth);
 
 UCLASS( ClassGroup=(Combat), meta=(BlueprintSpawnableComponent) )
@@ -38,6 +39,9 @@ public:
 
 	UPROPERTY(BlueprintAssignable, Category = "Health|Events")
 	FOnHealthChanged OnHealthChanged;
+
+	UPROPERTY(BlueprintAssignable, Category = "Health|Events")
+	FOnHitReaction OnHitReaction;	
 
 	// ── Settings ─────────────────────────────────────────
 	UPROPERTY(EditDefaultsOnly)
