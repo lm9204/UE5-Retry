@@ -41,7 +41,8 @@ EBTNodeResult::Type UBTTask_SuppressiveFire::ExecuteTask(UBehaviorTreeComponent&
 	FVector ToTarget = Target->GetActorLocation() - NPC->GetActorLocation();
 	ToTarget.Z = 0.f;
 	FRotator LookAtRotation = ToTarget.Rotation();
-	
+	NPC->SetActorRotation(LookAtRotation);   // 즉시 회전 (스냅)
+
 	// 제압 사격 - 조준 위치에 랜덤 스프레드 추가
 	for (int32 i = 0; i < BurstCount; ++i)
 	{

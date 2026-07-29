@@ -41,7 +41,8 @@ EBTNodeResult::Type UBTTask_FireFromCover::ExecuteTask(UBehaviorTreeComponent& O
 	FVector ToTarget = Target->GetActorLocation() - NPC->GetActorLocation();
 	ToTarget.Z = 0.f;
 	FRotator LookAtRotation = ToTarget.Rotation();
-	
+	NPC->SetActorRotation(LookAtRotation);   // 즉시 회전 (스냅)
+
 	WC->SetAimTarget(Target->GetActorLocation() + FVector(0, 0, 60.f));
 
 	for (int32 i = 0; i < ShotsPerPeek; ++i)
