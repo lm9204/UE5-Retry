@@ -15,6 +15,7 @@ enum class ENPCCombatState : uint8
 	Reload      UMETA(DisplayName = "Reload"),
 	Retreat     UMETA(DisplayName = "Retreat"),
 	Hold        UMETA(DisplayName = "Hold"),
+	Suppress    UMETA(DisplayName = "Suppress"),
 	Dead        UMETA(DisplayName = "Dead"),
 };
 
@@ -28,11 +29,13 @@ struct FNPCContext
 	float   DistToTarget      = 99999.f;
 	bool    bCanSeeTarget     = false;
 	FVector LastKnownLocation = FVector::ZeroVector;
+	bool    bTargetJustDied   = false;
 	
 	// 자신 상태
 	float HPRatio      = 1.f;
 	int32 CurrentAmmo  = 0;
 	int32 MaxAmmo      = 30;
+	int32 ReserveAmmo  = 0;
 	bool  bIsReloading = false;
 	bool  bIsInCover   = false;
 	bool  bIsArmed	   = false;

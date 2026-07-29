@@ -5,6 +5,7 @@
 #include "Perception/AISenseConfig_Sight.h"
 #include "Perception/AISense_Sight.h"
 #include "Components/NPCDecisionComponent.h"
+#include "Debug/CombatLogging.h"
 
 ARetryNPCController::ARetryNPCController(
     const FObjectInitializer& ObjectInitializer)
@@ -46,8 +47,8 @@ void ARetryNPCController::OnPossess(APawn* InPawn)
     {
         RunBehaviorTree(BehaviorTreeAsset);
         UE_LOG(LogTemp, Warning,
-            TEXT("[NPC Controller] BT 실행: %s"),
-            *BehaviorTreeAsset->GetName());
+            TEXT("[NPC Controller] %s BT 실행: %s"),
+            *GetCombatLogName(InPawn), *BehaviorTreeAsset->GetName());
     }
 }
 
@@ -98,18 +99,32 @@ ETeamAttitude::Type ARetryNPCController::GetTeamAttitudeTowards(const AActor& Ot
 void ARetryNPCController::OnTargetPerceptionUpdated(
     AActor* Actor, FAIStimulus Stimulus)
 {
-    UE_LOG(LogTemp, Error, TEXT("[Perception] Sensed: %s | Actor: %s"),
-    Stimulus.WasSuccessfullySensed() ? TEXT("TRUE") : TEXT("FALSE"),
-    *Actor->GetName());
+    // UE_LOG(LogTemp, Warning, TEXT("[Perception] Sensed: %s | Actor: %s"),
+    // Stimulus.WasSuccessfullySensed() ? TEXT("TRUE") : TEXT("FALSE"),
+    // *Actor->GetName());
     
     if (Stimulus.WasSuccessfullySensed())
     {
+        // 즉시 반영 — 감지는 빠르게 반응해야 함
         LastPerceivedActor = Actor;
         LastPerceptionTime = GetWorld()->GetTimeSeconds();
+
+        // 잃어버림 타이머가 걸려있었다면 취소 (다시 보였으니까)
+        GetWorld()->GetTimerManager().ClearTimer(PerceptionDebounceHandle);
     }
     else
     {
-        LastPerceivedActor = nullptr;
-        LastLostTime = GetWorld()->GetTimeSeconds();
+        // 즉시 지우지 않고, 일정 시간 계속 안 보이면 그때 지움
+        AActor* LostActor = Actor;
+        GetWorld()->GetTimerManager().SetTimer(PerceptionDebounceHandle,
+            [this, LostActor]()
+            {
+                if (LastPerceivedActor == LostActor)
+                {
+                    LastLostTime = GetWorld()->GetTimeSeconds();
+                    // LastPerceivedActor는 DecisionComponent의
+                    // LostSightTimeout 로직이 처리하도록 그대로 둠
+                }
+            }, 0.3f, false);  // 0.3초간 연속으로 안 보여야 확정
     }
 }

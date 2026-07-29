@@ -39,8 +39,13 @@ public:
 	float ReloadScoreWeight = 1.0f;
 
 	// Perception 설정
+	// AAIController의 SightConfig->LoseSightRadius와 맞춰야 한다 — Perception은
+	// 한 번 감지한 타겟을 LoseSightRadius까지는 계속 "인지 중"으로 유지하는데
+	// (히스테리시스), 이 값이 그보다 작으면 Perception은 타겟을 여전히 인지 중이라
+	// CombatState가 Attack/TakeCover를 유지하면서도 CheckLineOfSight의 거리
+	// 컷오프에 걸려 영원히 사격하지 못하는 사각지대가 생긴다.
 	UPROPERTY(EditAnywhere, Category="Perception")
-	float SightRange = 1500.f;
+	float SightRange = 3000.f;
 
 	UPROPERTY(EditAnywhere, Category="Perception")
 	float LostSightTimeout = 3.f;

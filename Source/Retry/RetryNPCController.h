@@ -41,4 +41,7 @@ protected:
 private:
 	UFUNCTION()
 	void OnTargetPerceptionUpdated(AActor* Actor, FAIStimulus Stimulus);
+
+	FTimerHandle PerceptionDebounceHandle;
+	AActor* PendingPerceivedActor = nullptr;
 };

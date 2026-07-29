@@ -1,6 +1,7 @@
 #include "NPCDecisionComponent.h"
 
 #include "AIController.h"
+#include "MemoryComponent.h"
 #include "NavigationSystem.h"
 #include "RetryNPCController.h"
 #include "RetryNPCCharacter.h"
@@ -9,6 +10,7 @@
 #include "Components/PersonalityComponent.h"
 #include "Components/WeaponComponent.h"
 #include "Debug/AIDebugWidget.h"
+#include "Debug/CombatLogging.h"
 #include "GameFramework/Character.h"
 
 UNPCDecisionComponent::UNPCDecisionComponent()
@@ -77,9 +79,10 @@ void UNPCDecisionComponent::UpdateAIState(float DeltaSeconds)
     // ===임시===
     if (NPCC->LastPerceivedActor)
     {
-        // 자체 LineTrace 대신 Perception이 이미 판정한 결과 신뢰
+        // bCanSeeTarget은 여기서 true로 단정하지 않는다 — LastPerceivedActor는
+        // 시야 차단 후에도 LostSightTimeout 동안 유지되므로, 실제 가시성은
+        // CollectContext()의 CheckLineOfSight 결과를 WriteBlackboard()가 반영한다.
         BB->SetValueAsObject(TEXT("TargetActor"), NPCC->LastPerceivedActor);
-        BB->SetValueAsBool(TEXT("bCanSeeTarget"), true);
         BB->SetValueAsBool(TEXT("bAlerted"), true);
         TimeSinceLostSight = 0.f;
     }
@@ -105,14 +108,16 @@ void UNPCDecisionComponent::UpdateCombatState()
     ENPCCombatState Stable    = GetStableState(Candidate, CachedContext);
 
     bool bWasFiringState =
-    CurrentState == ENPCCombatState::Attack ||
-    CurrentState == ENPCCombatState::TakeCover;
+        CurrentState == ENPCCombatState::Attack ||
+        CurrentState == ENPCCombatState::TakeCover ||
+        CurrentState == ENPCCombatState::Suppress;
 
     bool bStillFiringState =
         Stable == ENPCCombatState::Attack ||
-        Stable == ENPCCombatState::TakeCover;
-    
-    bool bNowFiringState = Stable == ENPCCombatState::Attack || Stable == ENPCCombatState::TakeCover;
+        Stable == ENPCCombatState::TakeCover ||
+        Stable == ENPCCombatState::Suppress;
+
+    bool bNowFiringState = bStillFiringState;
 
     if (ACharacter* NPC = Cast<ACharacter>(
            Cast<AAIController>(GetOwner()->GetInstigatorController())->GetPawn()))
@@ -133,6 +138,28 @@ void UNPCDecisionComponent::UpdateCombatState()
 
     if (Stable != CurrentState)
     {
+        // 전투 결과 메모리 기록
+        if (ACharacter* NPC = Cast<ACharacter>(
+            Cast<AAIController>(GetOwner()->GetInstigatorController())->GetPawn()))
+        {
+            if (UMemoryComponent* Memory = NPC->FindComponentByClass<UMemoryComponent>())
+            {
+                if (Stable == ENPCCombatState::Retreat)
+                {
+                    Memory->AddMemory(EMemoryEventType::CombatDefeat,
+                        NPC->GetActorLocation(), 0.5f,
+                        TEXT("전투에서 밀려 후퇴함"));
+                }
+                else if (CachedContext.bTargetJustDied &&
+                         (bWasFiringState || CurrentState == ENPCCombatState::Reload))
+                {
+                    Memory->AddMemory(EMemoryEventType::EnemyKilled,
+                        NPC->GetActorLocation(), 0.3f,
+                        TEXT("교전 후 적을 제압함"));
+                }
+            }
+        }
+        
         FString Reason = FString::Printf(
             TEXT("A:%.2f C:%.2f R:%.2f Rl:%.2f"),
             LastScoreSnapshot.AttackScore,
@@ -212,14 +239,36 @@ FNPCContext UNPCDecisionComponent::CollectContext()
         BB->GetValueAsObject(TEXT("TargetActor")));
     Ctx.bAlerted = BB->GetValueAsBool(TEXT("bAlerted"));
 
-    if (Ctx.Target)
+    if (Ctx.Target && IsValid(Ctx.Target))
     {
-        Ctx.DistToTarget = FVector::Dist(
-            NPC->GetActorLocation(),
-            Ctx.Target->GetActorLocation());
-        Ctx.bCanSeeTarget = CheckLineOfSight(NPC, Ctx.Target);
-        Ctx.LastKnownLocation =
-            BB->GetValueAsVector(TEXT("LastKnownEnemyLocation"));
+        if (UHealthComponent* TargetHC =
+       Ctx.Target->FindComponentByClass<UHealthComponent>())
+        {
+            if (TargetHC->IsDead())
+            {
+                // 죽은 타겟 즉시 제거
+                BB->ClearValue(TEXT("TargetActor"));
+                Ctx.Target = nullptr;
+                Ctx.bAlerted = false;
+                Ctx.bTargetJustDied = true;
+                BB->SetValueAsBool(TEXT("bAlerted"), false);
+
+                if (ARetryNPCController* NPCC = Cast<ARetryNPCController>(AIC))
+                {
+                    NPCC->LastPerceivedActor = nullptr;
+                }
+            }
+        }
+
+        if (Ctx.Target)
+        {
+            Ctx.DistToTarget = FVector::Dist(
+                NPC->GetActorLocation(),
+                Ctx.Target->GetActorLocation());
+            Ctx.bCanSeeTarget = CheckLineOfSight(NPC, Ctx.Target);
+            Ctx.LastKnownLocation =
+                BB->GetValueAsVector(TEXT("LastKnownEnemyLocation"));
+        }
     }
 
     // HP
@@ -234,6 +283,8 @@ FNPCContext UNPCDecisionComponent::CollectContext()
         NPC->FindComponentByClass<UWeaponComponent>())
     {
         Ctx.CurrentAmmo  = WC->GetCurrentAmmo();
+        Ctx.MaxAmmo      = WC->GetMagSize();
+        Ctx.ReserveAmmo  = WC->GetReserveAmmo();
         Ctx.bIsReloading = WC->GetIsReloading();
         Ctx.bIsArmed = WC->IsArmed();
     }
@@ -300,6 +351,11 @@ ENPCCombatState UNPCDecisionComponent::DecideState(
     // 전투 없을 때
     if (!Ctx.Target)
     {
+        // 평시에도 탄약이 가득 차지 않았고 여유 탄약이 있으면 미리 장전
+        if (Ctx.bIsArmed && !Ctx.bIsReloading &&
+            Ctx.CurrentAmmo < Ctx.MaxAmmo && Ctx.ReserveAmmo > 0)
+            return ENPCCombatState::Reload;
+
         if (Ctx.bAlerted)
             return ENPCCombatState::Search;
         if (Ctx.bHasPatrol)
@@ -340,6 +396,12 @@ ENPCCombatState UNPCDecisionComponent::DecideState(
     }
     if (Max == CoverScore)
     {
+        // 이미 엄폐 중이고 타겟이 보이면 제압사격, 그 외(이동/은신 중)에는 TakeCover
+        if (Ctx.bIsInCover && Ctx.bCanSeeTarget)
+        {
+            LastScoreSnapshot.WinnerState = ENPCCombatState::Suppress;
+            return ENPCCombatState::Suppress;
+        }
         LastScoreSnapshot.WinnerState = ENPCCombatState::TakeCover;
         return ENPCCombatState::TakeCover;
     }
@@ -376,11 +438,13 @@ bool UNPCDecisionComponent::ShouldForceExit(
     switch (State)
     {
     case ENPCCombatState::Attack:
-        return !Ctx.Target || Ctx.CurrentAmmo <= 0;
+        return !Ctx.Target || Ctx.CurrentAmmo <= 0 || !Ctx.bCanSeeTarget;
     case ENPCCombatState::Retreat:
         return !Ctx.Target && Ctx.HPRatio > 0.5f;
     case ENPCCombatState::TakeCover:
         return !Ctx.Target;
+    case ENPCCombatState::Suppress:
+        return !Ctx.Target || Ctx.CurrentAmmo <= 0 || !Ctx.bCanSeeTarget;
     default:
         return false;
     }
@@ -393,7 +457,9 @@ float UNPCDecisionComponent::CalcAttackScore(const FNPCContext& Ctx)
 {
     float Score = 0.f;
     if (!Ctx.bIsArmed) return 0.f;
-    if (Ctx.bCanSeeTarget) Score += 0.4f;
+    if (Ctx.CurrentAmmo <= 0) return 0.f;
+    if (!Ctx.bCanSeeTarget) return 0.f;
+    Score += 0.4f;
     Score += Ctx.Aggression  * 0.3f;
     Score += Ctx.Courage     * 0.2f;
     Score += Ctx.Dominance   * 0.15f;
@@ -424,12 +490,18 @@ float UNPCDecisionComponent::CalcRetreatScore(const FNPCContext& Ctx)
     Score += Ctx.FearSensitivity * 0.2f;
     Score -= Ctx.Courage         * 0.3f;
     Score -= Ctx.Aggression      * 0.2f;
+
+    // 탄약도 예비 탄약도 없으면 더 이상 싸울 방법이 없으니 후퇴를 강하게 민다
+    if (Ctx.bIsArmed && Ctx.CurrentAmmo <= 0 && Ctx.ReserveAmmo <= 0)
+        Score += 0.6f;
+
     return FMath::Clamp(Score, 0.f, 1.f);
 }
 
 float UNPCDecisionComponent::CalcReloadScore(const FNPCContext& Ctx)
 {
     if (!Ctx.bIsArmed) return 0.f;
+    if (Ctx.ReserveAmmo <= 0) return 0.f;
     if (Ctx.CurrentAmmo <= 0) return 1.0f;
     float AmmoRatio = static_cast<float>(Ctx.CurrentAmmo)
         / FMath::Max(Ctx.MaxAmmo, 1);
@@ -532,8 +604,16 @@ void UNPCDecisionComponent::RecordTransition(
     if (TransitionHistory.Num() > MaxHistorySize)
         TransitionHistory.RemoveAt(0);
 
+    FString NPCName = TEXT("?");
+    if (AAIController* AIC = Cast<AAIController>(GetOwner()->GetInstigatorController()))
+    {
+        if (APawn* NPC = AIC->GetPawn())
+            NPCName = GetCombatLogName(NPC);
+    }
+
     UE_LOG(LogTemp, Warning,
-        TEXT("[AI] %s → %s | %s"),
+        TEXT("[AI] %s: %s → %s | %s"),
+        *NPCName,
         *UEnum::GetValueAsString(From),
         *UEnum::GetValueAsString(To),
         *Reason);

@@ -3,7 +3,10 @@
 
 #include "Components/WeaponComponent.h"
 
+#include "RetryCharacter.h"
+#include "RetryNPCCharacter.h"
 #include "Actor/ProjectileActor.h"
+#include "Debug/CombatLogging.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/ProjectileMovementComponent.h"
 
@@ -16,8 +19,8 @@ UWeaponComponent::UWeaponComponent()
 void UWeaponComponent::AddReserveAmmo(int32 Amount)
 {
 	ReserveAmmo = FMath::Clamp(ReserveAmmo + Amount, 0, MaxReserveAmmo);
-	UE_LOG(LogTemp, Warning, TEXT("[Weapon] 탄약 보충 +%d → 예비: %d"),
-		Amount, ReserveAmmo);
+	UE_LOG(LogTemp, Warning, TEXT("[Weapon] %s 탄약 보충 +%d → 예비: %d"),
+		*GetCombatLogName(GetOwner()), Amount, ReserveAmmo);
 }
 
 void UWeaponComponent::EquipWeapon(UWeaponDataAsset* WeaponData)
@@ -54,7 +57,8 @@ void UWeaponComponent::EquipWeapon(UWeaponDataAsset* WeaponData)
 		}
 	}
 
-	UE_LOG(LogTemp, Warning, TEXT("[Weapon] 장착 %s"), *WeaponData->WeaponName);
+	UE_LOG(LogTemp, Warning, TEXT("[Weapon] %s 장착 %s"),
+		*GetCombatLogName(GetOwner()), *WeaponData->WeaponName);
 }
 
 void UWeaponComponent::UnEquipWeapon()
@@ -74,6 +78,19 @@ void UWeaponComponent::Fire()
 {
 	if (!bIsAiming) return;
 	if (!CurrentWeaponData || bIsReloading) return;
+
+	// Hit Reaction / 경직 체크
+	if (ACharacter* Owner = Cast<ACharacter>(GetOwner()))
+	{
+		if (ARetryCharacter* PC = Cast<ARetryCharacter>(Owner))
+		{
+			if (PC->bIsStaggered) return;
+		}
+		else if (ARetryNPCCharacter* NPC = Cast<ARetryNPCCharacter>(Owner))
+		{
+			if (NPC->bIsStaggered) return;
+		}
+	}
 	
 	if (CurrentWeaponData->FireMode == EFireMode::SemiAuto)
 	{
@@ -104,7 +121,11 @@ void UWeaponComponent::StartFire()
 void UWeaponComponent::StopFire()
 {
 	bIsFiring = false;
-	GetWorld()->GetTimerManager().ClearTimer(FireTimerHandle);
+
+	if (FireTimerHandle.IsValid())
+	{
+		GetWorld()->GetTimerManager().ClearTimer(FireTimerHandle);
+	}
 }
 
 void UWeaponComponent::StartAim()
@@ -115,6 +136,12 @@ void UWeaponComponent::StartAim()
 void UWeaponComponent::StopAim()
 {
 	bIsAiming = false;
+
+	// Fire()의 bIsAiming 가드가 깨지는 것을 막기 위해, 조준이 풀리면
+	// FullAuto가 걸어둔 반복 타이머(FireTimerHandle)도 함께 정지한다.
+	// 그렇지 않으면 CombatState가 Attack/TakeCover를 벗어나 StopAim()이
+	// 호출된 뒤에도 타이머가 CombatState와 무관하게 계속 FireOnce()를 호출한다.
+	StopFire();
 }
 
 void UWeaponComponent::Reload()
@@ -161,14 +188,15 @@ void UWeaponComponent::FireOnce()
 {
 	if (!CurrentWeaponData)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[Weapon:FireOnce] 총없음."));
+		UE_LOG(LogTemp, Warning, TEXT("[Weapon:FireOnce] %s 총없음."), *GetCombatLogName(GetOwner()));
 		return;
 	}
 
-	UE_LOG(LogTemp, Warning, TEXT("[Weapon:FireOnce] 탄약상태:%d."), CurrentAmmo);
+	UE_LOG(LogTemp, Warning, TEXT("[Weapon:FireOnce] %s 탄약상태:%d."),
+		*GetCombatLogName(GetOwner()), CurrentAmmo);
 	if (CurrentAmmo <= 0)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[Weapon:FireOnce] 탄약없음."));
+		UE_LOG(LogTemp, Warning, TEXT("[Weapon:FireOnce] %s 탄약없음."), *GetCombatLogName(GetOwner()));
 		StopFire();
 		return;
 	}
@@ -271,8 +299,8 @@ void UWeaponComponent::FinishReload()
 	bIsReloading = false;
 	OnWeaponReloaded.Broadcast();
 	
-	UE_LOG(LogTemp, Warning, TEXT("[Weapon] 재장전 완료 %d -> %d|남은탄약: %d"),
-		CurrentAmmo - AmmoToLoad, CurrentAmmo, ReserveAmmo);
+	UE_LOG(LogTemp, Warning, TEXT("[Weapon] %s 재장전 완료 %d -> %d|남은탄약: %d"),
+		*GetCombatLogName(GetOwner()), CurrentAmmo - AmmoToLoad, CurrentAmmo, ReserveAmmo);
 }
 
 

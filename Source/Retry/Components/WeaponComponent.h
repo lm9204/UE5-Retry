@@ -60,6 +60,12 @@ public:
 	UFUNCTION(BlueprintPure, Category="Weapon")
 	int32 GetCurrentAmmo() const { return CurrentAmmo; }
 
+	UFUNCTION(BlueprintPure, Category="Weapon")
+	int32 GetReserveAmmo() const { return ReserveAmmo; }
+
+	UFUNCTION(BlueprintPure, Category="Weapon")
+	int32 GetMagSize() const { return CurrentWeaponData ? CurrentWeaponData->MagSize : 0; }
+
 	UPROPERTY(BlueprintAssignable, Category="Weapon")
 	FOnWeaponFired OnWeaponFired;
 	
