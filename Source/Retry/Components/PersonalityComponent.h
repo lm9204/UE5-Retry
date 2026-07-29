@@ -99,6 +99,9 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Personality")
     void ApplyDelta(const FPersonalityDelta& Delta);
 
+    UFUNCTION(BlueprintCallable, Category="Personality")
+    FString BuildLLMPrompt(const TArray<struct FNPCMemory>& RecentMemories) const;
+
     // ── Stress 관리 ──────────────────────────────────
     UFUNCTION(BlueprintCallable, Category = "Personality")
     void AddStress(float Amount);

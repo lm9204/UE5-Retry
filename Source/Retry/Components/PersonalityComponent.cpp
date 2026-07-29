@@ -1,6 +1,8 @@
 #include "Components/PersonalityComponent.h"
+#include "Components/MemoryComponent.h"
 #include "AIController.h"
 #include "BehaviorTree/BlackboardComponent.h"
+#include "Debug/CombatLogging.h"
 #include "GameFramework/Character.h"
 
 UPersonalityComponent::UPersonalityComponent()
@@ -98,7 +100,28 @@ void UPersonalityComponent::ApplyDelta(const FPersonalityDelta& Delta)
     SyncToBlackboard();
 
     UE_LOG(LogTemp, Warning, TEXT("[Personality] ApplyDelta 적용 — %s"),
-        *GetOwner()->GetName());
+        *GetCombatLogName(GetOwner()));
+}
+
+FString UPersonalityComponent::BuildLLMPrompt(
+    const TArray<FNPCMemory>& RecentMemories) const
+{
+    FString MemoryText;
+    for (const FNPCMemory& Mem : RecentMemories)
+    {
+        MemoryText += FString::Printf(TEXT("- %s\n"), *Mem.Description);
+    }
+
+    return FString::Printf(TEXT(
+        "You are simulating a game NPC's personality shift based on recent events.\n"
+        "Current stats (0.0~1.0): Aggression=%.2f, Fear=%.2f, Trust=%.2f, "
+        "Courage=%.2f, FearSensitivity=%.2f.\n"
+        "Recent events:\n%s\n"
+        "Respond ONLY in JSON, no markdown, no explanation. "
+        "Format: {\"Aggression\":0.0,\"Fear\":0.0,\"Trust\":0.0,"
+        "\"Courage\":0.0,\"FearSensitivity\":0.0}\n"
+        "Each value is a DELTA (change amount, range -0.3 to 0.3), not absolute."
+    ), Aggression, Fear, Trust, Courage, FearSensitivity, *MemoryText);
 }
 
 void UPersonalityComponent::AddStress(float Amount)

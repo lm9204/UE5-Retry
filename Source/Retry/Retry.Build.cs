@@ -19,7 +19,10 @@ public class Retry : ModuleRules
 			"GameplayStateTreeModule",
 			"UMG",
 			"Slate",
-			"NavigationSystem"
+			"NavigationSystem",
+			"HTTP",
+			"Json",
+			"JsonUtilities",
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[] { });
