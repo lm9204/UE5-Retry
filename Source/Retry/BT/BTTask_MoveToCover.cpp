@@ -5,6 +5,7 @@
 
 #include "AIController.h"
 #include "BehaviorTree/BlackboardComponent.h"
+#include "Debug/CombatLogging.h"
 #include "Navigation/PathFollowingComponent.h"
 
 UBTTask_MoveToCover::UBTTask_MoveToCover()
@@ -21,7 +22,8 @@ EBTNodeResult::Type UBTTask_MoveToCover::ExecuteTask(UBehaviorTreeComponent& Own
 	if (!BB) return EBTNodeResult::Failed;
 
 	FVector CoverLoc = BB->GetValueAsVector(TEXT("CoverLocation"));
-	UE_LOG(LogTemp, Warning, TEXT("[MoveToCover] CoverLoc: %s"), *CoverLoc.ToString());
+	UE_LOG(LogTemp, Warning, TEXT("[MoveToCover] %s CoverLoc: %s"),
+		*GetCombatLogName(AIC->GetPawn()), *CoverLoc.ToString());
 
 	if (CoverLoc.IsZero()) return EBTNodeResult::Failed;
 	

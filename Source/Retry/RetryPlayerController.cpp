@@ -10,6 +10,7 @@
 #include "Blueprint/AIBlueprintHelperLibrary.h"
 #include "Retry.h"
 #include "Components/WeaponComponent.h"
+#include "Debug/CombatLogging.h"
 #include "Debug/MyCheatManager.h"
 #include "Widgets/Input/SVirtualJoystick.h"
 
@@ -136,7 +137,7 @@ void ARetryPlayerController::ToggleInventory()
 	if (!InventoryWidget) return;
 
 	bool bVisible = InventoryWidget->IsVisible();
-	UE_LOG(LogTemp, Warning, TEXT("ToggleInventory")); 
+	UE_LOG(LogTemp, Warning, TEXT("%s ToggleInventory"), *GetCombatLogName(GetPawn()));
 
 	if (bVisible)
 	{
