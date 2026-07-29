@@ -48,6 +48,12 @@ public:
 	UFUNCTION(Exec)
 	void ToggleAIDebug();
 
+	UFUNCTION(Exec)
+	void TestCommandMemory();
+
+	UFUNCTION(Exec)
+	void TriggerMemory(float Amount);
+
 	UPROPERTY(EditDefaultsOnly, Category="Cheat")
 	TSubclassOf<ARetryNPCCharacter> NPCCharacterClass;
 

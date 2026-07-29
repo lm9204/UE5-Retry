@@ -41,6 +41,9 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components")
 	class UWeaponComponent* WeaponComponent;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components")
+	class UMemoryComponent* MemoryComponent;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	class UWidgetComponent* NameplateWidget;
 
@@ -65,15 +68,36 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category="Weapon")
 	FString DefaultAmmo;
 
+	/** Hit Reaction */
+	UPROPERTY(EditDefaultsOnly, Category="Combat")
+	class UAnimMontage* HitMontage;
+
+	UPROPERTY()
+	bool bIsStaggered = false;
+
+	UPROPERTY(EditAnywhere, Category="AI")
+	bool bIsHighIntelligence = false;
+
+
 protected:
 	// Called when the game starts or when spawned
 	virtual void BeginPlay() override;
 
-public:	
+private:	
 	UFUNCTION()
 	void OnDeath();
 
 	UFUNCTION()
 	void OnHealthChanged(float CurrentHP, float MaxHP);
+
+	/** Hit Reaction */
+	UFUNCTION()
+	void PlayHitReaction(FDamageInfo Info);
+
+	UFUNCTION()
+	void OnHitMontageEnded(UAnimMontage* Montage, bool bInterrupted);
+
+	UFUNCTION()
+	void OnMemoryThresholdReached();
 
 };

@@ -8,7 +8,9 @@
 #include "GameFramework/Character.h"
 #include "Components/HealthComponent.h"
 #include "Components/InventoryComponent.h"
+#include "Components/MemoryComponent.h"
 #include "Components/PersonalityComponent.h"
+#include "Debug/CombatLogging.h"
 #include "Kismet/GameplayStatics.h"
 
 void UMyCheatManager::DamageMe(float Amount)
@@ -84,7 +86,7 @@ void UMyCheatManager::GiveItemToActor(
 	Inv->AddItem(Item);
 	UE_LOG(LogTemp, Warning,
 		TEXT("[Cheat] %s에게 아이템 지급: %s x%d"),
-		*TargetActor->GetName(), *TypeName, Count);
+		*GetCombatLogName(TargetActor), *TypeName, Count);
 }
 
 void UMyCheatManager::EquipItem(FName ItemID)
@@ -117,8 +119,8 @@ void UMyCheatManager::TestArmorDamage(float Amount)
 	UInventoryComponent* Inv = P->FindComponentByClass<UInventoryComponent>();
 	if (Inv)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[Test] 현재 ArmorReduction: %.2f"),
-			Inv->GetTotalArmorReduction());
+		UE_LOG(LogTemp, Warning, TEXT("[Test] %s 현재 ArmorReduction: %.2f"),
+			*GetCombatLogName(P), Inv->GetTotalArmorReduction());
 	}
 
 	DamageMe(Amount);
@@ -165,7 +167,7 @@ void UMyCheatManager::SetNPCAggression(float Value)
 		PC->Aggression = FMath::Clamp(Value, 0.f, 1.f);
 		PC->SyncToBlackboard();
 		UE_LOG(LogTemp, Warning, TEXT("[CheatManager] %s Aggression -> %.2f"),
-			*Closest->GetName(), PC->GetAggression());
+			*GetCombatLogName(Closest), PC->GetAggression());
 	}
 }
 
@@ -256,4 +258,81 @@ void UMyCheatManager::ToggleAIDebug()
 	}
 
 	UE_LOG(LogTemp, Warning, TEXT("[Cheat] AI Debug UI 토글"));
+}
+
+void UMyCheatManager::TestCommandMemory()
+{
+	APlayerController* PC = GetOuterAPlayerController();
+	if (!PC) return;
+
+	APawn* Player = PC->GetPawn();
+	if (!Player) return;
+
+	TArray<AActor*> NPCs;
+	UGameplayStatics::GetAllActorsOfClass(
+		GetWorld(), ARetryNPCCharacter::StaticClass(), NPCs);
+
+	for (AActor* Actor : NPCs)
+	{
+		if (ARetryNPCCharacter* NPC = Cast<ARetryNPCCharacter>(Actor))
+		{
+			if (NPC->MemoryComponent)
+			{
+				NPC->MemoryComponent->AddMemory(
+					EMemoryEventType::PlayerCommand,
+					NPC->GetActorLocation(), 0.1f,
+					TEXT("플레이어로부터 명령을 수신함"));
+			}
+		}
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("[Cheat] 전체 NPC에게 명령 메모리 기록"));
+}
+
+void UMyCheatManager::TriggerMemory(float Amount)
+{
+	APlayerController* PC = GetOuterAPlayerController();
+	if (!PC) return;
+
+	APawn* Player = PC->GetPawn();
+	if (!Player) return;
+
+	TArray<AActor*> NPCs;
+	UGameplayStatics::GetAllActorsOfClass(
+		GetWorld(), ARetryNPCCharacter::StaticClass(), NPCs);
+
+	// 가장 가까운 고지능 NPC 찾기
+	ARetryNPCCharacter* Target = nullptr;
+	float MinDist = TNumericLimits<float>::Max();
+
+	for (AActor* Actor : NPCs)
+	{
+		ARetryNPCCharacter* NPC = Cast<ARetryNPCCharacter>(Actor);
+		if (!NPC || !NPC->bIsHighIntelligence) continue;
+
+		float Dist = FVector::Dist(Player->GetActorLocation(), NPC->GetActorLocation());
+		if (Dist < MinDist)
+		{
+			MinDist = Dist;
+			Target = NPC;
+		}
+	}
+
+	if (!Target)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[Cheat] 고지능 NPC 없음"));
+		return;
+	}
+
+	if (Target->MemoryComponent)
+	{
+		Target->MemoryComponent->AddMemory(
+			EMemoryEventType::AllyDeath,
+			Target->GetActorLocation(),
+			Amount,
+			TEXT("[테스트] 강제 트리거된 이벤트"));
+
+		UE_LOG(LogTemp, Warning, TEXT("[Cheat] %s에게 EmotionWeight %.2f 강제 기록"),
+			*GetCombatLogName(Target), Amount);
+	}
 }
