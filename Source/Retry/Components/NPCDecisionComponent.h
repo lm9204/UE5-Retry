@@ -60,6 +60,9 @@ public:
 	UPROPERTY(EditAnywhere, Category="Cover")
 	float CoverSearchInterval = 0.5f;
 
+	UFUNCTION(BlueprintCallable, Category="Group")
+	void SetOrder(ENPCOrder Order, float Weight);
+
 	// 디버그
 	UPROPERTY(EditAnywhere, Category="Debug")
 	bool bDebugEnabled = false;
@@ -101,9 +104,12 @@ private:
 	// 내부 상태
 	FNPCContext		CachedContext;
 	ENPCCombatState	CurrentState = ENPCCombatState::Idle;
+	ENPCOrder		PendingOrder = ENPCOrder::HoldFire;
 	float			TimeSinceChange = 0.f;
 	float			TimeSinceLostSight = 0.f;
 	float			TimeSinceCoverSearch = 0.f;
+	float			PendingOrderWeight = 0.f;
+	bool			bWasTargetSetLastTick = false;
 
 	static constexpr int32 MaxHistorySize = 10;
 	

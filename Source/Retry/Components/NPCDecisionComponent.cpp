@@ -5,6 +5,7 @@
 #include "NavigationSystem.h"
 #include "RetryNPCController.h"
 #include "RetryNPCCharacter.h"
+#include "AI/GroupManagerActor.h"
 #include "BehaviorTree/BlackboardComponent.h"
 #include "Components/HealthComponent.h"
 #include "Components/PersonalityComponent.h"
@@ -149,12 +150,32 @@ void UNPCDecisionComponent::UpdateCombatState()
                     Memory->AddMemory(EMemoryEventType::CombatDefeat,
                         NPC->GetActorLocation(), 0.5f,
                         TEXT("전투에서 밀려 후퇴함"));
+
+                    if (UPersonalityComponent* PC =
+                        NPC->FindComponentByClass<UPersonalityComponent>())
+                    {
+                        PC->Fear = 1.0f;   // 최대치 고정 — 재진입 방지
+                    }
+
+                    // 레벨 퇴장 처리 — 일정 시간 후 비활성화
+                    FTimerHandle RetreatExitHandle;
+                    TWeakObjectPtr<ACharacter> WeakNPC(NPC);
+                    GetWorld()->GetTimerManager().SetTimer(RetreatExitHandle,
+                        [WeakNPC]()
+                        {
+                            if (WeakNPC.IsValid())
+                            {
+                                WeakNPC->SetActorHiddenInGame(true);
+                                WeakNPC->SetActorEnableCollision(false);
+                                WeakNPC->SetActorTickEnabled(false);
+                            }
+                        }, 5.f, false);  // 5초 후 완전 퇴장 (도주 애니메이션 볼 시간 확보)
                 }
                 else if (CachedContext.bTargetJustDied &&
                          (bWasFiringState || CurrentState == ENPCCombatState::Reload))
                 {
                     Memory->AddMemory(EMemoryEventType::EnemyKilled,
-                        NPC->GetActorLocation(), 0.3f,
+                        NPC->GetActorLocation(), 0.2f,
                         TEXT("교전 후 적을 제압함"));
                 }
             }
@@ -242,7 +263,7 @@ FNPCContext UNPCDecisionComponent::CollectContext()
     if (Ctx.Target && IsValid(Ctx.Target))
     {
         if (UHealthComponent* TargetHC =
-       Ctx.Target->FindComponentByClass<UHealthComponent>())
+            Ctx.Target->FindComponentByClass<UHealthComponent>())
         {
             if (TargetHC->IsDead())
             {
@@ -262,13 +283,36 @@ FNPCContext UNPCDecisionComponent::CollectContext()
 
         if (Ctx.Target)
         {
+            bool bWasEmpty = !bWasTargetSetLastTick;
+
             Ctx.DistToTarget = FVector::Dist(
                 NPC->GetActorLocation(),
                 Ctx.Target->GetActorLocation());
             Ctx.bCanSeeTarget = CheckLineOfSight(NPC, Ctx.Target);
             Ctx.LastKnownLocation =
                 BB->GetValueAsVector(TEXT("LastKnownEnemyLocation"));
+
+            if (Ctx.bCanSeeTarget && bWasEmpty)
+            {
+                ARetryNPCCharacter* NPCChar = Cast<ARetryNPCCharacter>(NPC);
+                if (NPCChar && NPCChar->MyGroup)
+                {
+                    NPCChar->MyGroup->AddGroupMemory(
+                        NPCChar->NPCName,
+                        TEXT("CombatStart"),
+                        NPC->GetActorLocation(),
+                        0.1f,
+                        FString::Printf(TEXT("%s가 적을 발견하며 교전이 시작됨"),
+                            *NPCChar->NPCName)
+                    );
+                }
+            }
+            bWasTargetSetLastTick = true;
         }
+    }
+    else
+    {
+        bWasTargetSetLastTick = false;
     }
 
     // HP
@@ -323,6 +367,10 @@ FNPCContext UNPCDecisionComponent::CollectContext()
     Ctx.bIsInCover = !Ctx.CoverLocation.IsZero() &&
         FVector::Dist(NPC->GetActorLocation(),
             Ctx.CoverLocation) < 100.f;
+
+    // 그룹 명령
+    Ctx.CurrentOrder = PendingOrder;
+    Ctx.OrderWeight = PendingOrderWeight;
 
     // 커버 탐색
     if (Ctx.Target)
@@ -465,6 +513,18 @@ float UNPCDecisionComponent::CalcAttackScore(const FNPCContext& Ctx)
     Score += Ctx.Dominance   * 0.15f;
     Score -= (1.f - Ctx.HPRatio) * (1.f - Ctx.Courage) * 0.3f;
     Score -= Ctx.CoverPreference * 0.1f;
+
+    // 명령 가중치 반영
+    if (Ctx.CurrentOrder == ENPCOrder::Charge ||
+        Ctx.CurrentOrder == ENPCOrder::FreeFire)
+    {
+        Score += Ctx.OrderWeight;
+    }
+    else if (Ctx.CurrentOrder == ENPCOrder::HoldFire)
+    {
+        Score -= Ctx.OrderWeight;
+    }
+    
     return FMath::Clamp(Score, 0.f, 1.f);
 }
 
@@ -478,6 +538,13 @@ float UNPCDecisionComponent::CalcCoverScore(const FNPCContext& Ctx)
     Score += Ctx.FearSensitivity * 0.2f;
     Score += Ctx.Fear            * 0.2f;
     Score += (1.f - Ctx.HPRatio) * 0.2f;
+
+    // 명령 가중치 반영
+    if (Ctx.CurrentOrder == ENPCOrder::TakeCover ||
+        Ctx.CurrentOrder == ENPCOrder::HoldFire)
+    {
+        Score += Ctx.OrderWeight;
+    }
     
     return FMath::Clamp(Score, 0.f, 1.f);
 }
@@ -490,6 +557,14 @@ float UNPCDecisionComponent::CalcRetreatScore(const FNPCContext& Ctx)
     Score += Ctx.FearSensitivity * 0.2f;
     Score -= Ctx.Courage         * 0.3f;
     Score -= Ctx.Aggression      * 0.2f;
+
+    Score -= Ctx.Loyalty * 0.15f;
+
+    // 명령 가중치 반영
+    if (Ctx.CurrentOrder == ENPCOrder::Retreat)
+    {
+        Score += Ctx.OrderWeight;
+    }
 
     // 탄약도 예비 탄약도 없으면 더 이상 싸울 방법이 없으니 후퇴를 강하게 민다
     if (Ctx.bIsArmed && Ctx.CurrentAmmo <= 0 && Ctx.ReserveAmmo <= 0)
@@ -650,4 +725,10 @@ void UNPCDecisionComponent::UpdateDebugWidget()
         TargetName,
         CachedContext.DistToTarget
     );
+}
+
+void UNPCDecisionComponent::SetOrder(ENPCOrder Order, float Weight)
+{
+    PendingOrder = Order;
+    PendingOrderWeight = Weight;
 }

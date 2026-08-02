@@ -20,8 +20,8 @@ ARetryNPCController::ARetryNPCController(
     UAISenseConfig_Sight* SightConfig =
         CreateDefaultSubobject<UAISenseConfig_Sight>(
             TEXT("SightConfig"));
-    SightConfig->SightRadius = 1500.f;
-    SightConfig->LoseSightRadius = 2000.f;
+    SightConfig->SightRadius = 3000.f;
+    SightConfig->LoseSightRadius = 3000.f;
     SightConfig->PeripheralVisionAngleDegrees = 90.f;
     SightConfig->DetectionByAffiliation.bDetectEnemies    = true;
     SightConfig->DetectionByAffiliation.bDetectNeutrals   = false;

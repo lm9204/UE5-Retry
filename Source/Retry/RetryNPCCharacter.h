@@ -6,6 +6,7 @@
 #include "GenericTeamAgentInterface.h"
 #include "GameFramework/Character.h"
 #include "Components/WidgetComponent.h"
+#include "Items/ItemDefinition.h"
 #include "RetryNPCCharacter.generated.h"
 
 UCLASS()
@@ -47,6 +48,15 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	class UWidgetComponent* NameplateWidget;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components")
+	class UDialogComponent* DialogComponent;
+
+	UPROPERTY(VisibleAnywhere, Category="Dialogue")
+	class UWidgetComponent* DialogueWidgetComponent;
+
+	UPROPERTY(EditDefaultsOnly, Category="Dialogue")
+	TSubclassOf<class UDialogueWidget> DialogueWidgetClass;
+
 	UPROPERTY(EditInstanceOnly, Category="Patrol")
 	TArray<AActor*> PatrolPoints;
 
@@ -72,12 +82,20 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category="Combat")
 	class UAnimMontage* HitMontage;
 
+	UPROPERTY(EditInstanceOnly, Category="Group")
+	class AGroupManagerActor* MyGroup;
+
+	UPROPERTY(EditInstanceOnly, Category="Group")
+	bool bIsGroupLeader = false;
+
+	UPROPERTY(EditInstanceOnly, Category="Inventory")
+	TArray<TObjectPtr<UItemDefinition>> StartingItems;
+
 	UPROPERTY()
 	bool bIsStaggered = false;
 
 	UPROPERTY(EditAnywhere, Category="AI")
 	bool bIsHighIntelligence = false;
-
 
 protected:
 	// Called when the game starts or when spawned
@@ -99,5 +117,8 @@ private:
 
 	UFUNCTION()
 	void OnMemoryThresholdReached();
+
+	UFUNCTION()
+	void OnDialogueRequested(const FString& Text, float Duration);
 
 };

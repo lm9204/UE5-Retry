@@ -11,6 +11,8 @@
 #include "Components/MemoryComponent.h"
 #include "Components/PersonalityComponent.h"
 #include "Debug/CombatLogging.h"
+#include "Engine/AssetManager.h"
+#include "Items/ItemDefinition.h"
 #include "Kismet/GameplayStatics.h"
 
 void UMyCheatManager::DamageMe(float Amount)
@@ -71,13 +73,33 @@ void UMyCheatManager::GiveItemToActor(
 		TargetActor->FindComponentByClass<UInventoryComponent>();
 	if (!Inv) return;
 
-	UItemDefinition* Def = ItemDefinitionMap.FindRef(TypeName);
-	if (!Def)
+	// UItemDefinition* Def = ItemDefinitionMap.FindRef(TypeName);
+	// if (!Def)
+	// {
+	// 	UE_LOG(LogTemp, Error,
+	// 		TEXT("[Cheat] ItemDefinition 없음: %s"), *TypeName);
+	// 	return;
+	// }
+	//
+	// FItemInstance Item;
+	// Item.Definition = Def;
+	// Item.StackCount = Count;
+
+	// AssetManager에서 "Item:d" 형태로 조회
+	FPrimaryAssetId Id("ItemDefinition", FName(*TypeName));
+
+	UAssetManager& AM = UAssetManager::Get();
+	FSoftObjectPath AssetPath = AM.GetPrimaryAssetPath(Id);
+
+	if (!AssetPath.IsValid())
 	{
 		UE_LOG(LogTemp, Error,
 			TEXT("[Cheat] ItemDefinition 없음: %s"), *TypeName);
 		return;
 	}
+
+	UItemDefinition* Def = Cast<UItemDefinition>(AssetPath.TryLoad());
+	if (!Def) return;
 
 	FItemInstance Item;
 	Item.Definition = Def;

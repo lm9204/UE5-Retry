@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "AI/NPCOrderTypes.h"
 #include "NPCContext.generated.h"
 
 UENUM(BlueprintType)
@@ -58,6 +59,10 @@ struct FNPCContext
 	FVector CoverLocation = FVector::ZeroVector;
 	bool    bAlerted      = false;
 	bool    bHasPatrol    = false;
+
+	// 그룹 명령 관련
+	ENPCOrder CurrentOrder = ENPCOrder::TakeCover;
+	float OrderWeight = 0.f; // [0~1.f]
 };
 
 USTRUCT()

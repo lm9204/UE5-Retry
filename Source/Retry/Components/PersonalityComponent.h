@@ -4,6 +4,24 @@
 #include "Components/ActorComponent.h"
 #include "PersonalityComponent.generated.h"
 
+USTRUCT()
+struct FPersonalitySnapshot
+{
+    GENERATED_BODY()
+
+    float Aggression = 0.f;
+    float Fear = 0.f;
+    float Trust = 0.f;
+    float Courage = 0.f;
+    float FearSensitivity = 0.f;
+    float CoverPreference = 0.f;
+    float TacticalSkill = 0.f;
+    float TrustBias = 0.f;
+    float Loyalty = 0.f;
+    float Dominance = 0.f;
+    float Patience = 0.f;
+};
+
 UENUM(BlueprintType)
 enum class EPersonalityType : uint8
 {
@@ -49,6 +67,8 @@ class RETRY_API UPersonalityComponent : public UActorComponent
 
 public:
     UPersonalityComponent();
+
+    FPersonalitySnapshot GetSnapshot() const;
 
     // ── 기존 getter ──────────────────────────────────
     UFUNCTION(BlueprintPure, Category = "Personality")

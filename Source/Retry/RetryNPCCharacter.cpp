@@ -6,8 +6,11 @@
 #include "BrainComponent.h"
 #include "UI/FloatingNameWidget.h"
 #include "LLMRequestQueue.h"
+#include "AI/GroupManagerActor.h"
 #include "BehaviorTree/BlackboardComponent.h"
+#include "Components/CapsuleComponent.h"
 #include "Components/CombatComponent.h"
+#include "Components/DialogComponent.h"
 #include "Components/HealthComponent.h"
 #include "Components/InventoryComponent.h"
 #include "Components/MemoryComponent.h"
@@ -19,6 +22,7 @@
 #include "Items/ItemDefinition.h"
 #include "Debug/MyCheatManager.h"
 #include "Kismet/GameplayStatics.h"
+#include "UI/DialogueWidget.h"
 
 // Sets default values
 ARetryNPCCharacter::ARetryNPCCharacter()
@@ -33,6 +37,7 @@ ARetryNPCCharacter::ARetryNPCCharacter()
 	PersonalityComponent = CreateDefaultSubobject<UPersonalityComponent>(TEXT("PersonalityComponent"));
 	WeaponComponent = CreateDefaultSubobject<UWeaponComponent>(TEXT("WeaponComponent"));
 	MemoryComponent = CreateDefaultSubobject<UMemoryComponent>(TEXT("MemoryComponent"));
+	DialogComponent = CreateDefaultSubobject<UDialogComponent>(TEXT("DialogComponent"));
 	
 	//이름표 위젯
 	NameplateWidget = CreateDefaultSubobject<UWidgetComponent>(TEXT("NameplateWidget"));
@@ -47,6 +52,15 @@ ARetryNPCCharacter::ARetryNPCCharacter()
 	AIDebugWidget->SetRelativeLocation(FVector(0.f, 0.f, 50.f));
 	AIDebugWidget->SetWidgetSpace(EWidgetSpace::Screen);
 	AIDebugWidget->SetVisibility(false);
+
+	// Dialogue Widget
+	DialogueWidgetComponent = CreateDefaultSubobject<UWidgetComponent>(
+	TEXT("DialogueWidgetComponent"));
+	DialogueWidgetComponent->SetupAttachment(RootComponent);
+	DialogueWidgetComponent->SetRelativeLocation(FVector(0.f, 0.f, 500.f));  // NameplateWidget보다 위
+	DialogueWidgetComponent->SetWidgetSpace(EWidgetSpace::Screen);
+	DialogueWidgetComponent->SetDrawSize(FVector2D(200.f, 80.f));
+	DialogueWidgetComponent->SetVisibility(false);
 }
 
 // Called when the game starts or when spawned
@@ -86,29 +100,37 @@ void ARetryNPCCharacter::BeginPlay()
 		AIDebugWidget->SetWidgetClass(AIDebugWidgetClass);
 	}
 
-	APlayerController* PC =
-		UGameplayStatics::GetPlayerController(this, 0);
-	if (PC)
+	// Dialogue Widget
+	if (bIsHighIntelligence && DialogueWidgetClass)
 	{
-		if (UMyCheatManager* CM =
-			Cast<UMyCheatManager>(PC->CheatManager))
+		DialogueWidgetComponent->SetWidgetClass(DialogueWidgetClass);
+		// DialogueWidgetComponent->SetVisibility(true);
+
+		if (DialogComponent)
 		{
-			if (!DefaultWeapon.IsEmpty())
+			DialogComponent->OnDialogueRequested.AddDynamic(
+				this, &ARetryNPCCharacter::OnDialogueRequested);
+		}
+	}
+
+	// 그룹 등록
+	if (MyGroup) MyGroup->RegisterMember(this, bIsGroupLeader);
+
+	// NPC 인벤토리 아이템 지급
+	if (StartingItems.Num() > 0)
+	{
+		for (UItemDefinition* Def : StartingItems)
+		{
+			if (!Def) continue;
+
+			if (UInventoryComponent* Inv = InventoryComponent)
 			{
-				CM->GiveItemToActor(this, DefaultWeapon, 1);
-				InventoryComponent->EquipItem("m16a4");
+				FItemInstance Item;
+				Item.Definition = Def;
+				Item.StackCount = 1;
+				Inv->AddItem(Item);
+				Inv->EquipItem(Def->ItemID);
 			}
-	
-			// if (!DefaultAmmo.IsEmpty())
-			// {
-			// 	CM->GiveItemToActor(this, DefaultAmmo,1);
-			// 	CM->GiveItemToActor(this, DefaultAmmo,1);
-			// 	CM->GiveItemToActor(this, DefaultAmmo,1);
-			// 	InventoryComponent->EquipItem("ammo_556");
-			// 	InventoryComponent->EquipItem("ammo_556");
-			// 	InventoryComponent->EquipItem("ammo_556");
-			// }
-			
 		}
 	}
 
@@ -127,7 +149,14 @@ void ARetryNPCCharacter::OnDeath()
 	}
 
 	GetCharacterMovement()->DisableMovement();
+	GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
 	GetMesh()->SetCollisionProfileName(TEXT("Ragdoll"));
+	// 죽은 뒤에도 시체가 WorldDynamic(투사체 BlockAllDynamic)을 막으면
+	// 시체 뒤의 살아있는 타겟을 노리는 총알이 시체에 맞고 사라져 버린다.
+	// 바닥(WorldStatic) 등 다른 채널 반응은 프로필 기본값을 그대로 두고
+	// 투사체 채널만 선택적으로 무시한다.
+	GetMesh()->SetCollisionResponseToChannel(ECC_WorldDynamic, ECR_Ignore);
 	GetMesh()->SetAllBodiesSimulatePhysics(true);
 	GetMesh()->SetSimulatePhysics(true);
 	GetMesh()->SetPhysicsBlendWeight(1.f);
@@ -138,24 +167,67 @@ void ARetryNPCCharacter::OnDeath()
 
 	for (AActor* Actor : AllNPCs)
 	{
-		if (Actor == this) return;
+		if (Actor == this) continue;
 
 		ARetryNPCCharacter* OtherNPC = Cast<ARetryNPCCharacter>(Actor);
 		if (!OtherNPC || !OtherNPC->MemoryComponent) continue;
-		if (!OtherNPC->bIsHighIntelligence) continue;
-
-		// 같은 팀만 (아군 사망 목격)
 		if (OtherNPC->TeamID != TeamID) continue;
+		// if (!OtherNPC->bIsHighIntelligence) continue;
+		// if (!OtherNPC->MyGroup || OtherNPC->MyGroup != MyGroup) continue;
 
-		float Dist = FVector::Dist(GetActorLocation(), OtherNPC->GetActorLocation());
-		if (Dist > 3500.f) continue;  // 목격 범위
+		// 직접 목격 여부 판단 — 시야 체크
+		FHitResult Hit;
+		FCollisionQueryParams Params;
+		Params.AddIgnoredActor(this);
+		Params.AddIgnoredActor(OtherNPC);
 
-		OtherNPC->MemoryComponent->AddMemory(
-			EMemoryEventType::AllyDeath,
-			GetActorLocation(),
-			0.4f,
-			FString::Printf(TEXT("아군 %s가 전투 중 사망하는 것을 목격함"), *GetName())
-		);
+		FVector Start = OtherNPC->GetActorLocation() + FVector(0, 0, 60.f);
+		FVector End = GetActorLocation() + FVector(0, 0, 60.f);
+		float Dist = FVector::Dist(Start, End);
+
+		bool bBlocked = GetWorld()->LineTraceSingleByChannel(
+			Hit, Start, End, ECC_Visibility, Params);
+
+		bool bWitnessed = !bBlocked && Dist <= 3000.f;
+
+		if (bWitnessed)
+		{
+			// 같은 그룹원인 경우
+			if (MyGroup && OtherNPC->MyGroup && OtherNPC->MyGroup == MyGroup)
+			{
+				MyGroup->AddGroupMemory(
+					OtherNPC->NPCName,           // 목격자 ID
+					TEXT("AllyDeath"),
+					GetActorLocation(),
+					0.3f,
+					FString::Printf(TEXT("%s가 그룹 %s의 전투 중 사망을 직접 목격함"),
+						*OtherNPC->NPCName, *NPCName)
+				);
+			}
+			// 같은 그룹원은 아니지만 아군인 경우
+			else if (MyGroup && OtherNPC->TeamID == TeamID)
+			{
+				OtherNPC->MyGroup->AddGroupMemory(
+					OtherNPC->NPCName,           // 목격자 ID
+					TEXT("AllyDeath"),
+					GetActorLocation(),
+					0.2f,
+					FString::Printf(TEXT("%s가 아군 %s의 전투 중 사망을 직접 목격함"),
+						*OtherNPC->NPCName, *NPCName)
+				);
+			}
+
+			// 그룹에 소속되지 않은 아군인 경우
+			if (!OtherNPC->MyGroup && OtherNPC->TeamID == TeamID)
+			{
+				OtherNPC->MemoryComponent->AddMemory(
+					EMemoryEventType::AllyDeath,
+					GetActorLocation(),
+					0.2f,
+					FString::Printf(TEXT("아군 %s가 전투 중 사망하는 것을 목격함"), *GetName())
+				);
+			}
+		}
 	}
 
 	UE_LOG(LogTemp, Warning, TEXT("[NPC] %s is dead"), *NPCName);
@@ -212,4 +284,15 @@ void ARetryNPCCharacter::OnMemoryThresholdReached()
 	Queue->Enqueue(Request);
 
 	UE_LOG(LogTemp, Warning, TEXT("[NPC] %s LLM 요청 큐에 추가"), *NPCName);
+}
+
+void ARetryNPCCharacter::OnDialogueRequested(const FString& Text, float Duration)
+{
+	if (!DialogueWidgetComponent) return;
+
+	if (UDialogueWidget* Widget =
+		Cast<UDialogueWidget>(DialogueWidgetComponent->GetUserWidgetObject()))
+	{
+		Widget->ShowText(Text, Duration);
+	}
 }
