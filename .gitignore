@@ -9,4 +9,6 @@ Saved/
 *.sln
 *.suo
 .vs/
+.idea/
+*.slnx
 /Retry.uproject.DotSettings.user
