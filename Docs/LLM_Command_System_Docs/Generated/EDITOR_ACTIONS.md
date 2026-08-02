@@ -1,4 +1,53 @@
-# Phase 0/1 — User Editor Verification Actions
+# Unreal Editor Integration Actions
+
+## Phase 3 Unit 1 — Scenario Definition DataAsset
+
+### Codex가 구현한 것
+
+- `FScenarioLaunchOptions`: Seed, LLM 사용, 로그, 자동 시작 기본값.
+- `UScenarioDefinition : UPrimaryDataAsset`: Scenario ID, 표시명, 설명, Soft Level 참조, 기본 실행 옵션.
+- `IsDefinitionValid()`: 필수 ID, 표시명, Level 누락 검사.
+- `GetPrimaryAssetId()`: `ScenarioDefinition:ScenarioId` 형식의 식별자 반환.
+
+Blueprint에 property를 읽기 전용으로 노출한 이유는 Widget이 Scenario 목록과 설명을 표시할 수 있게 하되, 실행 중 임의 변경은 막기 위해서다. `IsDefinitionValid()`는 이후 Registry와 디버그 UI에서 같은 검증 규칙을 재사용하기 위해 노출했다.
+
+### 사용자가 에디터에서 해야 할 것
+
+Editor target 빌드와 에디터 재시작 후 수행한다.
+
+1. `/Game/Scenarios` 폴더를 만든다.
+2. Miscellaneous > Data Asset을 선택한다.
+3. Data Asset Class로 `ScenarioDefinition`을 선택한다.
+4. 이름을 `DA_TS_ReconSecure_001`로 지정한다.
+5. 다음 property를 설정한다.
+   - Scenario ID: `TS_ReconSecure_001`
+   - Display Name: `Recon → Report → Secure 001`
+   - Description: 첫 기술 스파이크를 설명하는 문장
+   - Level: 사용자 확인 후 기존 `Lvl_ThirdPerson` 또는 전용 기술 스파이크 Level 지정
+   - Default Launch Options > Seed: `1001`
+   - Use LLM: false
+   - Enable Logging: true
+   - Auto Start: true
+6. 저장한다.
+
+### 검증 절차
+
+1. DataAsset 생성 메뉴에 `ScenarioDefinition`이 표시되는지 확인한다.
+2. 위 property가 Details 패널에 표시되는지 확인한다.
+3. Scenario ID와 Level을 비운 상태가 이후 Registry validation에서 거부되도록 현재 입력값을 확인한다.
+4. 저장 후 asset 경로와 property 값을 기록한다.
+
+### 현재 통합 상태
+
+- [x] C++ Game Development 빌드 성공
+- [ ] Editor target 빌드 성공
+- [ ] `DA_TS_ReconSecure_001` 생성
+- [ ] 필수 property 설정
+- [ ] DataAsset 저장 및 확인
+
+---
+
+## Phase 0/1 — User Editor Verification Actions
 
 Phase 0/1에서는 에셋을 생성하거나 수정하지 않는다. 아래는 사용자가 Unreal Editor에서 **열어 보고 확인할 항목만** 정리한 체크리스트다.
 

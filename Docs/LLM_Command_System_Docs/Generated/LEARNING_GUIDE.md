@@ -265,6 +265,41 @@ Phase 3은 다음 순서로 한 단위씩 구현하고 확인한다.
 
 어느 항목을 직접 할지는 Phase 3 시작 때 사용자와 정한다.
 
+### Phase 3 진행 기록 — Unit 1
+
+상태: **C++ Code Complete / Editor Integration Pending**
+
+생성된 파일:
+
+- `Source/Retry/Scenario/ScenarioTypes.h`
+- `Source/Retry/Scenario/ScenarioDefinition.h`
+- `Source/Retry/Scenario/ScenarioDefinition.cpp`
+
+이번 단위에서 실제로 적용한 개념:
+
+- `FScenarioLaunchOptions`는 Seed와 실행 옵션을 한 값 묶음으로 만드는 `USTRUCT`다.
+- `UScenarioDefinition`은 에디터에서 Scenario 설정 asset을 만들 수 있게 하는 `UPrimaryDataAsset`이다.
+- `TSoftObjectPtr<UWorld>`는 전투 Level을 즉시 로드하지 않고 경로로 가리킨다.
+- `IsDefinitionValid()`는 ID, 표시 이름, Level이 비어 있는 잘못된 설정을 거부한다.
+- `GetPrimaryAssetId()`는 Scenario를 `ScenarioDefinition:ScenarioId` 형태로 식별한다.
+
+호출 흐름:
+
+```text
+사용자가 에디터에서 Scenario DataAsset 생성
+→ Details 패널에서 UScenarioDefinition property 입력
+→ 이후 Registry가 IsDefinitionValid 호출
+→ 유효하면 GetPrimaryAssetId로 목록에 등록
+```
+
+현재는 Registry와 메뉴가 아직 없으므로 DataAsset을 실행하지는 못한다. Unit 1은 “실행할 설정표의 형식”만 만든 단계다.
+
+검증 결과:
+
+- Unreal Header Tool이 `USTRUCT`, `UCLASS`, `UPROPERTY`, `UFUNCTION` reflection 코드를 정상 생성했다.
+- `Retry Win64 Development` 컴파일과 링크가 성공했다.
+- 실행 중인 Editor에는 새 `UCLASS`가 아직 로드되지 않았으므로 Editor 재빌드와 재시작 후 DataAsset을 만든다.
+
 ## 7. Phase 4 — Command Data와 상태 전이
 
 ### 눈에 보이는 목표
