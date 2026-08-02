@@ -9,7 +9,7 @@
 #include "GameFramework/Controller.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
-#include "FloatingNameWidget.h"
+#include "UI/FloatingNameWidget.h"
 #include "InputActionValue.h"
 #include "Retry.h"
 #include "RetryNPCCharacter.h"

@@ -3,8 +3,8 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "InventoryWidget.h"
-#include "LootWidget.h"
+#include "UI/InventoryWidget.h"
+#include "UI/LootWidget.h"
 #include "GameFramework/PlayerController.h"
 #include "RetryPlayerController.generated.h"
 

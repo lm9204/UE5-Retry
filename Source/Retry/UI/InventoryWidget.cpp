@@ -1,7 +1,7 @@
 // Fill out your copyright notice in the Description page of Project Settings.
 
 
-#include "InventoryWidget.h"
+#include "UI/InventoryWidget.h"
 #include "Actor/DroppedItemActor.h"
 #include "RetryPlayerController.h"
 #include "Components/InventoryComponent.h"

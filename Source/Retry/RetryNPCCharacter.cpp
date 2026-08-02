@@ -4,7 +4,7 @@
 #include "RetryNPCCharacter.h"
 #include "AIController.h"
 #include "BrainComponent.h"
-#include "FloatingNameWidget.h"
+#include "UI/FloatingNameWidget.h"
 #include "LLMRequestQueue.h"
 #include "BehaviorTree/BlackboardComponent.h"
 #include "Components/CombatComponent.h"
