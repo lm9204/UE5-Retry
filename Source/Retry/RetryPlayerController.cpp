@@ -12,6 +12,7 @@
 #include "Components/WeaponComponent.h"
 #include "Debug/CombatLogging.h"
 #include "Debug/MyCheatManager.h"
+#include "UI/ScenarioDebugWidget.h"
 #include "Widgets/Input/SVirtualJoystick.h"
 
 ARetryPlayerController::ARetryPlayerController()
@@ -60,6 +61,17 @@ void ARetryPlayerController::BeginPlay()
 		LootWidget = CreateWidget<ULootWidget>(this, LootWidgetClass);
 		LootWidget->AddToViewport();
 		LootWidget->SetVisibility(ESlateVisibility::Hidden);
+	}
+
+	if (ScenarioDebugWidgetClass && IsLocalPlayerController())
+	{
+		ScenarioDebugWidget = CreateWidget<UScenarioDebugWidget>(
+			this, ScenarioDebugWidgetClass);
+		if (ScenarioDebugWidget)
+		{
+			ScenarioDebugWidget->AddToViewport(100);
+			ScenarioDebugWidget->SetVisibility(ESlateVisibility::Collapsed);
+		}
 	}
 	
 }
@@ -117,6 +129,12 @@ void ARetryPlayerController::SetupInputComponent()
 				EnhancedInputComponent->BindAction(IA_Reload, ETriggerEvent::Started,
 					this, &ARetryPlayerController::OnReload);
 			}
+
+			if (IA_ScenarioDebug)
+			{
+				EnhancedInputComponent->BindAction(IA_ScenarioDebug, ETriggerEvent::Started,
+					this, &ARetryPlayerController::ToggleScenarioDebug);
+			}
 		}
 	}
 }
@@ -161,6 +179,20 @@ void ARetryPlayerController::ToggleInventory()
 
 		InventoryWidget->SetVisibility(ESlateVisibility::Visible);
 	}
+}
+
+void ARetryPlayerController::ToggleScenarioDebug()
+{
+	if (!ScenarioDebugWidget) return;
+
+	if (ScenarioDebugWidget->IsVisible())
+	{
+		ScenarioDebugWidget->SetVisibility(ESlateVisibility::Collapsed);
+		return;
+	}
+
+	ScenarioDebugWidget->RefreshRunContext();
+	ScenarioDebugWidget->SetVisibility(ESlateVisibility::Visible);
 }
 
 void ARetryPlayerController::OnFireStarted()

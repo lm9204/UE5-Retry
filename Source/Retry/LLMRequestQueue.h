@@ -19,12 +19,16 @@ class RETRY_API ULLMRequestQueue : public UGameInstanceSubsystem
 
 public:
 	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
+	virtual void Deinitialize() override;
 
 	UFUNCTION(BlueprintCallable, Category="LLM")
 	void Enqueue(const FLLMRequest& Request);
 
 	UFUNCTION(BlueprintCallable, Category="LLM")
 	void EnqueueGroupRequest(class AGroupManagerActor* Group);
+
+	UFUNCTION(BlueprintCallable, Category="LLM")
+	void ResetQueueForScenarioTransition();
 
 	UPROPERTY(EditAnywhere, Category="LLM")
 	FString ServerURL = TEXT("http://localhost:8080/v1/chat/completions");
@@ -35,14 +39,14 @@ public:
 private:
 	TQueue<FLLMRequest> PendingRequests;
 	bool bIsProcessing = false;
+	FHttpRequestPtr ActiveRequest;
+	uint64 RequestGeneration = 0;
 
 	int32 NextRequestID = 0;
 
 	void ProcessNext();
 	void SendRequest(const FLLMRequest& Request);
-
-	void OnResponseReceived(FHttpRequestPtr Req, FHttpResponsePtr Resp,
-		bool bSuceess, FLLMRequest Request);
+	void HandleWorldCleanup(UWorld* World, bool bSessionEnded, bool bCleanupResources);
 	void ParseAndApplyResponse(const FString& ResponseJson,
 		UPersonalityComponent* Personality, AActor* TargetActor);
 	void ParseAndApplyGroupResponse(const FString& ResponseJson,
@@ -54,6 +58,4 @@ private:
 
 	UPROPERTY(EditAnywhere, Category="Dialogue")
 	class UDataTable* FallbackDialogueTable;
-
-	FTimerHandle TimeoutTimerHandle;
 };

@@ -152,11 +152,12 @@ void ARetryNPCCharacter::OnDeath()
 	GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 
 	GetMesh()->SetCollisionProfileName(TEXT("Ragdoll"));
-	// 죽은 뒤에도 시체가 WorldDynamic(투사체 BlockAllDynamic)을 막으면
-	// 시체 뒤의 살아있는 타겟을 노리는 총알이 시체에 맞고 사라져 버린다.
-	// 바닥(WorldStatic) 등 다른 채널 반응은 프로필 기본값을 그대로 두고
-	// 투사체 채널만 선택적으로 무시한다.
-	GetMesh()->SetCollisionResponseToChannel(ECC_WorldDynamic, ECR_Ignore);
+	GetMesh()->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+	// Capsule만 제거하고 Ragdoll Mesh는 정적/동적 바닥과 계속 충돌한다.
+	// 전용 Projectile object channel만 무시해 시체 뒤의 타겟을 사격할 수 있다.
+	GetMesh()->SetCollisionResponseToChannel(ECC_WorldStatic, ECR_Block);
+	GetMesh()->SetCollisionResponseToChannel(ECC_WorldDynamic, ECR_Block);
+	GetMesh()->SetCollisionResponseToChannel(ECC_GameTraceChannel2, ECR_Ignore);
 	GetMesh()->SetAllBodiesSimulatePhysics(true);
 	GetMesh()->SetSimulatePhysics(true);
 	GetMesh()->SetPhysicsBlendWeight(1.f);

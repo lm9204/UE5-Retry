@@ -52,6 +52,9 @@ public:
 	UFUNCTION(BlueprintPure, Category="Memory")
 	TArray<FNPCMemory> GetRecentMemories(int32 Count) const;
 
+	UFUNCTION(BlueprintCallable, Category="Memory")
+	void ResetMemories();
+
 	UPROPERTY(BlueprintAssignable, Category="Memory")
 	FOnMemoryThreshold OnMemoryThreshold;
 

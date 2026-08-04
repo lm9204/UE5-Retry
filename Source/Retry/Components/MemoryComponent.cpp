@@ -40,3 +40,9 @@ TArray<FNPCMemory> UMemoryComponent::GetRecentMemories(int32 Count) const
 		Result.Add(Memories[i]);
 	return Result;
 }
+
+void UMemoryComponent::ResetMemories()
+{
+	Memories.Reset();
+	AccumulatedEmotionScore = 0.f;
+}

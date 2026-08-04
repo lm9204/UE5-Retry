@@ -23,7 +23,7 @@ Editor target 빌드와 에디터 재시작 후 수행한다.
    - Scenario ID: `TS_ReconSecure_001`
    - Display Name: `Recon → Report → Secure 001`
    - Description: 첫 기술 스파이크를 설명하는 문장
-   - Level: 사용자 확인 후 기존 `Lvl_ThirdPerson` 또는 전용 기술 스파이크 Level 지정
+   - Level: 복제한 전용 기능 검증 Level `Lvl_TS_ReconSecure_001`
    - Default Launch Options > Seed: `1001`
    - Use LLM: false
    - Enable Logging: true
@@ -40,10 +40,640 @@ Editor target 빌드와 에디터 재시작 후 수행한다.
 ### 현재 통합 상태
 
 - [x] C++ Game Development 빌드 성공
-- [ ] Editor target 빌드 성공
-- [ ] `DA_TS_ReconSecure_001` 생성
-- [ ] 필수 property 설정
-- [ ] DataAsset 저장 및 확인
+- [x] Editor target 빌드 성공
+- [x] `DA_TS_ReconSecure_001` 생성
+- [x] 필수 property 설정
+- [x] DataAsset 저장 및 전용 레벨 정상 동작 확인
+
+사용자 검증으로 Phase 3 Unit 1은 **Integrated Complete**다.
+
+---
+
+## Phase 3 Unit 2 — Scenario Registry Settings
+
+### Codex가 구현한 것
+
+- `UScenarioRegistrySettings : UDeveloperSettings`
+- Project Settings의 `Registered Scenarios` Soft Reference 목록
+- 빈 참조, 로드 실패, 잘못된 Definition, 중복 Scenario ID 검증
+- Registry validation 자동화 테스트 두 개
+- `DeveloperSettings` 모듈 의존성
+
+Registry는 Scenario를 실행하지 않는다. “어떤 Scenario를 실행 대상으로 인정할 것인가”만 저장하며, 실제 조회와 레벨 전환은 다음 Unit의 `UScenarioRuntimeSubsystem`이 담당한다.
+
+### 사용자가 에디터에서 해야 할 것
+
+1. Live Coding을 실행한다.
+2. Project Settings를 연다.
+3. `Game > Scenario Registry` 항목을 찾는다.
+4. `Registered Scenarios` 배열에 항목 하나를 추가한다.
+5. `/Game/Scenarios/Definitions/DA_TS_ReconSecure_001`을 지정한다.
+6. Project Settings를 저장하고 `DefaultGame.ini` 변경을 확인한다.
+
+이번 수정은 새 `UCLASS`와 Config `UPROPERTY`를 포함한다. Live Coding 성공 후에도 `Scenario Registry`가 나타나지 않으면 UHT 반영을 위해 에디터 재시작과 사용자 주도 전체 빌드가 필요할 수 있다. Codex는 빌드를 실행하지 않는다.
+
+### 검증 절차
+
+1. `Registered Scenarios`가 정확히 한 항목인지 확인한다.
+2. 등록 Asset이 `DA_TS_ReconSecure_001`인지 확인한다.
+3. Automation에서 `Retry.Scenario.Registry.RejectsInvalidEntries`와 `RejectsDuplicateIds`를 실행한다.
+4. 두 테스트가 통과하면 Unit 2 C++ validation을 확인한 것이다.
+
+### 현재 통합 상태
+
+- [x] Registry C++ 및 자동화 테스트 작성
+- [x] 변경 파일 정적 검사
+- [x] 사용자 빌드 및 에디터 재시작
+- [x] Project Settings에 `DA_TS_ReconSecure_001` 등록
+- [x] `DefaultGame.ini` Soft Reference 저장 확인
+- [x] Registry 자동화 테스트 통과
+
+사용자 검증으로 Phase 3 Unit 2는 **Integrated Complete**다.
+
+---
+
+## Phase 3 Unit 3 — Scenario Runtime Subsystem
+
+### Codex가 구현한 것
+
+- `FScenarioRunContext`: Run ID, Scenario ID, Level, Launch Options, 활성 상태
+- `TryCreateScenarioRunContext()`: Definition 검증과 새 Run GUID 생성
+- `UScenarioRuntimeSubsystem : UGameInstanceSubsystem`
+- 등록 Scenario 목록 조회와 `StartScenario`
+- 같은 옵션을 유지하면서 새 Run ID를 만드는 `RestartCurrentScenario`
+- 메뉴 Level 존재 여부를 확인하는 `ReturnToScenarioMenu`
+- Level 전환 직전 LLM queue reset
+- Run Context 보존·새 GUID·잘못된 Definition 자동화 테스트
+
+RuntimeSubsystem은 Unreal이 GameInstance마다 자동 생성한다. 메뉴 Widget이나 Level Actor가 직접 생성하지 않으며 Level 전환 후에도 같은 객체가 유지된다.
+
+### 사용자가 확인할 것
+
+이번 수정은 새 `UCLASS`, `USTRUCT`, Blueprint API를 포함한다. 사용자가 Live Coding 또는 사용자 주도 빌드·재시작으로 반영한다. Codex는 빌드를 실행하지 않는다.
+
+Output Log에서 다음을 실행한다.
+
+```text
+Automation RunTests Retry.Scenario.Runtime
+```
+
+기대 테스트:
+
+- `Retry.Scenario.Runtime.PreservesLaunchData`
+- `Retry.Scenario.Runtime.RejectsInvalidDefinition`
+
+첫 테스트는 Scenario ID, Seed/옵션, Soft Level이 Run Context에 보존되고 다시 생성할 때 Run ID가 달라지는지 확인한다. 두 번째 테스트는 Level이 없는 Definition이 활성 실행 상태를 만들지 못하는지 확인한다.
+
+### 실제 OpenLevel 통합 결과
+
+- `/Game/Scenarios/Maps/Lvl_ScenarioMenu`와 Scenario 선택 UI가 생성됐다.
+- `StartScenario → OpenLevel → ScenarioInitializer`의 실제 Level 전환을 확인했다.
+- 메뉴에서 지정한 Seed, 맵명, Level 초기화 성공이 로그에 기록됐다.
+- Game Default Map은 메뉴로 변경했고 Editor Startup Map은 기존 값을 유지했다.
+
+### 현재 통합 상태
+
+- [x] RuntimeSubsystem C++ 및 자동화 테스트 작성
+- [x] 변경 파일 정적 검사
+- [x] 사용자 Live Coding 또는 빌드·재시작
+- [x] Runtime 자동화 테스트 통과
+- [x] 후속 Widget 연결 후 실제 OpenLevel 검증
+
+Unit 3은 Unit 5의 사용자 통합 검증을 포함해 **Integrated Complete** 상태다.
+
+---
+
+## Phase 3 Unit 4 — Scenario Initializer
+
+### Codex가 구현한 것
+
+- 레벨 배치 Actor `AScenarioInitializer`
+- Details 패널의 `Validate Scenario Setup` 버튼
+- Definition/현재 Level, Group ID, NPC Name, Group 참조, Team ID, 그룹별 Leader 검증
+- Run Context가 있는 정상 진입에서 Seed와 LLM/group/NPC 런타임 상태 초기화
+- Group Manager의 `TeamID`, `ResetGroupRuntimeState()`와 Memory Component의 `ResetMemories()`
+
+### 사용자가 에디터에서 해야 할 것
+
+이번 수정은 새 `UCLASS`, `UENUM`, `UPROPERTY`, `UFUNCTION`을 포함한다. 먼저 Live Coding을 시도하되 새 Actor나 property가 나타나지 않으면 에디터 재시작과 사용자 주도 빌드가 필요할 수 있다. Codex는 빌드를 실행하지 않는다.
+
+1. `Lvl_TS_ReconSecure_001`을 연다.
+2. Place Actors에서 `ScenarioInitializer`를 찾아 레벨에 정확히 하나 배치한다.
+3. Initializer의 `Scenario Definition`에 `/Game/Scenarios/Definitions/DA_TS_ReconSecure_001`을 지정한다.
+4. Group A와 Group B의 새 `Team ID`를 각각 소속 NPC들의 `Team ID`와 같은 값으로 지정한다.
+5. 각 Group에 정확히 한 NPC만 `Is Group Leader`가 체크되어 있는지 확인한다.
+6. Initializer의 Details 패널에서 `Validate Scenario Setup`을 누른다.
+7. `Last Initialization Result = Succeeded`, `Last Validation Message = Scenario setup is valid.`와 성공 로그를 확인한다.
+8. Level을 저장한다.
+
+### 의도적인 실패 확인
+
+1. Group 하나의 Team ID를 임시로 소속 NPC와 다르게 바꾼다.
+2. `Validate Scenario Setup`을 눌러 `Invalid Actor Configuration`과 Team ID 불일치 메시지를 확인한다.
+3. Team ID를 원래 값으로 복원하고 다시 성공하는지 확인한 뒤 저장한다.
+
+Level을 직접 열어 PIE하면 아직 메뉴가 Run Context를 만들지 않았으므로 `[Scenario] No active run context` 경고가 정상이다. 이 경로에서는 초기화를 건너뛰며 기존 전투 테스트는 계속 동작해야 한다. 실제 Seed 적용과 정상 초기화 성공 로그는 Unit 5의 Start 버튼 연결 후 확인한다.
+
+### 현재 통합 상태
+
+- [x] Initializer 및 reset C++ 작성
+- [x] 변경 범위 정적 검사
+- [x] 사용자 코드 반영
+- [x] Initializer 배치와 Definition/Team ID 연결
+- [x] 성공 및 의도적 실패 validation 확인
+
+Unit 4는 **Integrated Complete** 상태다.
+
+### 레벨 테스트 후 Ragdoll 충돌 회귀 수정
+
+사망 Capsule을 비활성화하고 시체 Mesh가 투사체를 막지 않게 만든 이전 처리에서, Mesh가 `WorldDynamic` 전체를 무시해 동적 바닥까지 통과할 수 있었다.
+
+수정된 충돌 구분:
+
+- 투사체 Sphere: `Projectile` object channel (`ECC_GameTraceChannel2`)
+- 사망 Capsule: `NoCollision`
+- Ragdoll Mesh: `QueryAndPhysics`, WorldStatic/WorldDynamic Block, Projectile Ignore
+
+사용자가 Project Settings에서 `Projectile` Object Channel을 생성했고, 에디터가 `ECC_GameTraceChannel2`, Default Response `Block`으로 저장한 것을 확인했다.
+
+사용자가 코드 반영 후 Ragdoll이 바닥에 정착하고 투사체가 시체를 통과해 뒤의 NPC를 타격하는 것을 모두 확인했다.
+
+검증 절차:
+
+1. `Project Settings > Engine > Collision`을 연다.
+2. `Object Channels`에서 새 채널을 추가한다.
+3. 이름을 정확히 `Projectile`, Default Response를 `Block`으로 지정한다.
+4. 생성된 채널이 `GameTraceChannel2`에 할당됐는지 확인한다. 다른 번호라면 C++의 `ECC_GameTraceChannel2`와 맞추기 전에 사용자와 Codex가 함께 조정한다.
+5. Project Settings를 닫고 필요하면 에디터를 재시작한 뒤 코드를 반영한다.
+6. NPC를 바닥 위에서 사망시켜 Ragdoll이 바닥에 정착하는지 확인한다.
+7. 바닥에 놓인 시체 뒤의 살아 있는 NPC를 사격한다.
+8. 총알이 시체에 소모되지 않고 뒤의 NPC에게 피해를 주는지 확인한다.
+9. 가능하면 정적 바닥과 이동 가능한 동적 바닥에서 각각 확인한다.
+
+---
+
+## Phase 3 Unit 5 — Dynamic Scenario Selection UI
+
+### Codex가 구현한 것
+
+- `UScenarioSelectWidget : UUserWidget` C++ 부모
+- Registry 기반 동적 Scenario 목록과 첫 항목 기본 선택
+- 등록 목록 밖 Definition 선택 거부
+- 선택 시 Definition의 기본 Launch Options 복사
+- Blueprint용 목록 갱신·선택 변경·시작 실패 event
+- 선택 옵션을 사용한 `StartSelectedScenario()`
+
+이번 수정은 새 `UCLASS`와 Blueprint API를 포함한다. 사용자가 Live Coding으로 반영하되 C++ 부모가 나타나지 않으면 사용자 주도 빌드·에디터 재시작이 필요하다. Codex는 빌드를 실행하지 않는다.
+
+### 사용자 실습 A — 메뉴 Asset 뼈대
+
+1. `/Game/Scenarios/UI` 폴더를 만든다.
+2. `ScenarioSelectWidget`을 부모로 `WBP_ScenarioSelect`을 만든다.
+3. 일반 `UserWidget` 부모로 `WBP_ScenarioEntry`를 만든다.
+4. `PlayerController` 부모로 `BP_ScenarioMenuPlayerController`를 만든다.
+5. `GameModeBase` 부모로 `BP_ScenarioMenuGameMode`를 만든다.
+6. `/Game/Scenarios/Maps/Lvl_ScenarioMenu` 빈 Level을 만든다.
+
+### 사용자 실습 B — WBP_ScenarioEntry
+
+1. Button 하나와 Scenario 이름을 표시할 TextBlock 하나를 배치한다.
+2. `Scenario` 변수를 `ScenarioDefinition Object Reference`로 만들고 `Instance Editable`, `Expose on Spawn`을 켠다.
+3. `Owner Scenario Widget` 변수를 `ScenarioSelectWidget Object Reference`로 만들고 같은 옵션을 켠다.
+4. `Pre Construct` 또는 별도 초기화 함수에서 `Scenario.Display Name`을 TextBlock에 표시한다.
+5. Button의 `OnClicked`에서 `Owner Scenario Widget → Select Scenario(Scenario)`를 호출한다.
+
+### 사용자 실습 C — WBP_ScenarioSelect
+
+권장 레이아웃은 왼쪽 `ScrollBox`, 오른쪽 상세 패널이다. 상세 패널에는 Display Name, Description, Seed 입력, Use LLM·Enable Logging·Auto Start 체크박스, Start 버튼, 오류 TextBlock을 둔다.
+
+1. `Refresh Scenario List` event를 구현한다.
+2. ScrollBox의 기존 children을 지운다.
+3. 전달받은 Scenarios를 `For Each Loop`로 순회한다.
+4. 매 항목마다 `Create Widget(WBP_ScenarioEntry)`를 호출하고 Scenario와 `self`를 전달한다.
+5. 생성한 Entry를 ScrollBox에 추가한다.
+6. `Scenario Selection Changed` event에서 이름·설명과 Launch Options UI를 갱신한다.
+7. Start Button에서 현재 UI 값으로 `FScenarioLaunchOptions`를 만든다.
+8. `Set Selected Launch Options` 후 `Start Selected Scenario`를 호출한다.
+9. `Scenario Start Failed` event에서 오류 TextBlock을 표시한다.
+
+### 사용자 실습 D — 메뉴 소유권과 Level 연결
+
+1. `BP_ScenarioMenuPlayerController`의 BeginPlay에서 `WBP_ScenarioSelect`을 생성한다. Owning Player는 self다.
+2. 생성한 Widget을 Viewport에 추가한다.
+3. `Show Mouse Cursor = true`, `Set Input Mode UI Only`로 설정한다.
+4. `BP_ScenarioMenuGameMode`의 Player Controller Class를 위 Controller로 지정하고 Default Pawn Class는 비운다.
+5. `Lvl_ScenarioMenu`의 World Settings에서 GameMode Override를 위 GameMode로 지정하고 저장한다.
+6. 이 단계에서는 Project Settings의 Game Default Map을 바꾸지 않는다. 먼저 메뉴 Level을 직접 열어 PIE로 검증한다.
+
+### 검증 순서
+
+1. 메뉴 PIE에서 Registry의 `DA_TS_ReconSecure_001`이 목록과 상세 패널에 나타난다.
+2. Seed를 알아보기 쉬운 값(예: `4242`)으로 바꾸고 Start한다.
+3. `Lvl_TS_ReconSecure_001`로 전환된다.
+4. 로그에 같은 Scenario ID, 새 Run ID, Seed `4242`가 출력된다.
+5. Initializer 로그가 성공이고 `MissingRunContext` 경고가 없어야 한다.
+
+### 현재 통합 상태
+
+- [x] Widget C++ 부모 작성
+- [x] 학습/에디터 절차 작성
+- [x] 사용자 코드 반영
+- [x] 메뉴 Level/Controller/GameMode/Widget Blueprint 생성
+- [x] Start → OpenLevel → Initializer 성공 검증
+
+Unit 5는 **Integrated Complete** 상태다.
+
+---
+
+## Phase 3 Unit 6 — Restart / Return Debug Panel
+
+### Codex가 구현한 것
+
+- `UScenarioDebugWidget` C++ Widget 부모
+- Run Context 조회와 Blueprint 갱신 event
+- 안전한 Restart/Return 호출과 실패 event
+- 기존 `ARetryPlayerController`의 Scenario Debug Widget 생성·F12 Action 토글
+- Return 성공 로그의 이전 Run ID 기록
+
+이번 수정은 새 `UCLASS`, `UPROPERTY`, Blueprint API를 포함한다. 사용자가 Live Coding으로 반영하되 C++ 부모나 Class Defaults 항목이 나타나지 않으면 사용자 주도 빌드·에디터 재시작이 필요하다. Codex는 빌드를 실행하지 않는다.
+
+### 사용자 실습 A — Enhanced Input
+
+1. `/Game/Input/Actions`에 `IA_ScenarioDebug` Input Action을 만든다.
+2. Value Type은 `Digital (bool)`로 둔다.
+3. `/Game/Input/IMC_Default`를 열고 mapping 하나를 추가한다.
+4. Action은 `IA_ScenarioDebug`, Key는 `F12`로 설정하고 저장한다. F9/F10/F11은 UE Editor 기본 명령과 충돌하므로 피한다.
+
+### 사용자 실습 B — WBP_ScenarioDebug
+
+1. `/Game/Scenarios/UI`에 `ScenarioDebugWidget`을 부모로 `WBP_ScenarioDebug`를 만든다.
+2. 화면 우측 상단에 Border/VerticalBox 패널을 배치한다.
+3. Scenario ID, Run ID, Seed, Active 상태용 TextBlock을 만든다.
+4. `Restart`, `Return to Menu` Button과 오류 TextBlock을 만든다.
+5. `Run Context Changed` event에서 `Break ScenarioRunContext`로 값을 분리한다.
+6. Scenario ID는 Name→Text, Run ID는 Guid→String→Text, Seed는 Int→Text로 변환해 표시한다.
+7. `Restart` OnClicked에서 `Restart Current Scenario`를 호출한다.
+8. `Return to Menu` OnClicked에서 `Return to Scenario Menu`를 호출한다.
+9. `Scenario Action Failed` event에서 오류 TextBlock을 표시한다.
+10. Compile하고 저장한다.
+
+### 사용자 실습 C — 기존 전투 PlayerController 연결
+
+1. `/Game/ThirdPerson/Blueprints/BP_ThirdPersonPlayerController`를 연다.
+2. Class Defaults의 `UI > Scenario > Scenario Debug Widget Class`에 `WBP_ScenarioDebug`를 지정한다.
+3. `Input > Actions > IA Scenario Debug`에 `IA_ScenarioDebug`를 지정한다.
+4. Compile하고 저장한다.
+
+### 기본 검증
+
+1. 메뉴에서 Seed를 `4242`, Use LLM은 false로 두고 Scenario를 시작한다.
+2. 전투 Level에서 F12를 눌러 패널이 열리고 다시 누르면 닫히는지 확인한다.
+3. Scenario ID, Seed `4242`, 유효한 Run ID, Active=true를 확인하고 첫 Run ID를 기록한다.
+4. 다시 패널을 열어 `Restart`를 누른다.
+5. 같은 Level이 다시 열리고 Initializer 성공 로그가 나오는지 확인한다.
+6. F12 패널에서 Seed는 `4242`로 같고 Run ID는 이전 값과 다른지 확인한다.
+7. NPC HP, 위치, memory와 group runtime 상태가 새 Level 상태로 돌아왔는지 확인한다.
+8. `Return to Menu`를 눌러 `Lvl_ScenarioMenu`로 이동하는지 확인한다.
+9. 로그에 `Returning to menu. Previous Run:`이 기록되는지 확인한다.
+10. 메뉴에서 다시 Start해 또 다른 Run ID가 생성되는지 확인한다.
+
+### 수명주기 회귀 검증
+
+1. Use LLM=true로 Scenario를 시작하되 로컬 LLM 서버는 끈다.
+2. LLM 요청이 active 또는 pending인 상태를 만든다.
+3. F12에서 Restart 또는 Return을 누른다.
+4. editor crash가 없고 queue 전환 정리 로그가 한 번 기록되는지 확인한다.
+5. 이전 Run의 late callback, fallback, personality/order 결과가 새 Run에 적용되지 않는지 확인한다.
+
+### 현재 통합 상태
+
+- [x] Debug Widget C++ 부모와 PlayerController 토글 작성
+- [x] Restart/Return 추적 로그 작성
+- [x] 학습/에디터 절차 작성
+- [x] 사용자 코드 반영
+- [x] Input Action/Mapping과 Widget Blueprint 연결
+- [x] Restart Level 전환 검증
+- [x] Return 메뉴 복귀 검증
+- [x] active LLM 요청 중 전환 회귀 검증
+
+Unit 6는 **Integrated Complete** 상태다.
+
+Phase 3은 **Feature Integrated Complete / Packaging Gate Pending** 상태다. 사용자 주도 Game target build와 등록 map cook/package 검증은 별도 최종 게이트로 남긴다.
+
+---
+
+## Phase 4 Unit 1 — Command Types and Status Transitions
+
+### Codex가 구현한 것
+
+- `ECommandVerb`: Recon, Secure, Defend, Block
+- `ECommandTargetType`: Area, Route, Position, Unit, Information
+- `ECommandStatus`: Proposed부터 terminal 상태까지
+- `FCommandIntent`, `FMissionContext`와 constraint/info/completion value struct
+- 모든 비종료 상태에서 취소 가능한 순수 상태 전이 함수
+- 정상 전이, 취소, 역전이/terminal 거부 자동화 테스트 3개
+
+이번 수정은 새 `UENUM`, `USTRUCT`를 포함한다. 사용자가 Live Coding으로 반영하되 UHT 반영이 되지 않으면 사용자 주도 빌드·에디터 재시작이 필요하다. Codex는 빌드를 실행하지 않는다.
+
+Output Log에서 다음을 실행한다.
+
+```text
+Automation RunTests Retry.Command.Status
+```
+
+기대 테스트:
+
+- `Retry.Command.Status.AcceptsForwardTransitions`
+- `Retry.Command.Status.AllowsCancellationBeforeTerminal`
+- `Retry.Command.Status.RejectsInvalidTransitions`
+
+### 현재 통합 상태
+
+- [x] Command/Mission value type 작성
+- [x] 상태 전이 규칙과 자동화 테스트 작성
+- [x] 기존 `ENPCOrder`, `LLMTypes` 무변경 확인
+- [x] 변경 파일 정적 검사
+- [x] 사용자 코드 반영
+- [x] Command Status 자동화 테스트 3개 통과
+
+Unit 1은 **Integrated Complete** 상태다.
+
+---
+
+## Phase 4 Unit 2 — Command Validation
+
+### Codex가 구현한 것
+
+- 구조화 오류 코드와 issue/result value struct
+- Command identity, 초기 Status, Priority와 Target 검사
+- 다섯 개 허용 Verb–Target 조합
+- Constraint/Information Requirement/Completion nested data 검사
+- 첫 오류에서 멈추지 않는 전체 오류 수집
+- Validation 성공 전 Command 상태를 바꾸지 않는 순수 Validator
+
+이번 수정은 새 `UENUM`, `USTRUCT`를 포함한다. 사용자가 Live Coding으로 반영하되 UHT 반영이 되지 않으면 사용자 주도 빌드·에디터 재시작이 필요하다. Codex는 빌드를 실행하지 않는다.
+
+Output Log에서 다음을 실행한다.
+
+```text
+Automation RunTests Retry.Command.Validation
+```
+
+기대 테스트:
+
+- `Retry.Command.Validation.AcceptsSupportedCombinations`
+- `Retry.Command.Validation.RejectsUnsupportedCombinations`
+- `Retry.Command.Validation.CollectsIdentityAndRangeErrors`
+- `Retry.Command.Validation.RejectsInvalidNestedData`
+
+### 현재 통합 상태
+
+- [x] 구조화 validation result와 Validator 작성
+- [x] 허용 조합 및 identity/range/nested 규칙 작성
+- [x] 자동화 테스트 4개 작성
+- [x] 변경 파일 정적 검사
+- [x] 사용자 코드 반영
+- [x] Command Validation 자동화 테스트 4개 통과
+
+Unit 2는 **Integrated Complete** 상태다.
+
+---
+
+## Phase 4 Unit 3 — Scenario Execution Log
+
+### Codex가 구현한 것
+
+- GameInstance 수명의 Run별 메모리 실행 로그
+- Run 시작·종료와 종료 이유 기록
+- Run/Command/Event ID와 Run 내부 순번 연결
+- Command validation 결과 및 상태 전이용 구조화 이벤트
+- 이전 Run의 늦은 event write 거부
+- Restart 시 완료 Run 보존, Return 시 활성 Run 종료
+- ID 연결·stale write·완료 Run 보존 자동화 테스트 3개
+
+이번 변경은 새 `UCLASS`, `UENUM`, `USTRUCT`를 포함한다. 사용자가 코드 반영 후 Unreal Editor에 타입이 나타나지 않으면 Editor를 닫고 사용자 주도 빌드·재시작이 필요하다. Codex는 빌드를 실행하지 않는다.
+
+### 사용자 검증 절차
+
+Output Log에서 다음을 실행한다.
+
+```text
+Automation RunTests Retry.Scenario.ExecutionLog
+```
+
+기대 테스트:
+
+- `Retry.Scenario.ExecutionLog.LinksRunCommandAndEventIds`
+- `Retry.Scenario.ExecutionLog.RejectsStaleRunWrites`
+- `Retry.Scenario.ExecutionLog.PreservesCompletedRuns`
+
+이 단위에는 Blueprint, Level, Project Settings 변경이 없다. 세 테스트가 모두 통과하면 결과를 알려준다.
+
+첫 실행에서 테스트 fixture가 Subsystem을 transient package 아래에 생성하여 `ClassWithin GameInstance` ensure가 발생했다. fixture는 임시 `UGameInstance`를 올바른 Outer로 사용하도록 수정됐다. 코드 반영 후 세 테스트를 다시 실행하며, Success 표시뿐 아니라 해당 ensure가 더 이상 없는지도 확인한다.
+
+### 현재 통합 상태
+
+- [x] 실행 로그 Subsystem과 구조화 타입 작성
+- [x] Scenario Start/Restart/Return 수명 연결
+- [x] stale Run 및 상태 전이 기록 경계 작성
+- [x] 자동화 테스트 3개 작성
+- [x] 변경 파일 정적 검사
+- [x] 사용자 코드 반영
+- [x] Scenario Execution Log 자동화 테스트 3개 통과
+- [x] `ClassWithin GameInstance` ensure 제거 확인
+
+Unit 3는 **Integrated Complete** 상태다.
+
+---
+
+## Phase 4 Unit 4 — Group Command Authority
+
+### Codex가 구현한 것
+
+- GroupManager의 Current Command 권위 상태
+- 구조화된 Command assignment outcome/result
+- 활성 Scenario Run과 Execution Log가 있는 할당 경계
+- validation 및 Assigned Group ID 일치 검사
+- `Proposed → Validated → Assigned` 전이와 구조화 로그
+- 활성 Command 덮어쓰기 방지
+- Cancel/terminal Clear 수명 규칙
+- 기존 `SetOrderForAll` 전투 명령 경로 보존
+- Group authority 자동화 테스트 3개
+
+이번 변경은 새 `UENUM`, `USTRUCT`, `UPROPERTY`, `UFUNCTION`을 포함한다. 사용자가 Live Coding으로 반영하되 새 reflection 타입이 나타나지 않으면 Editor를 닫고 사용자 주도 빌드·재시작이 필요할 수 있다. Codex는 빌드를 실행하지 않는다.
+
+### 사용자 검증 절차
+
+Output Log에서 다음을 실행한다.
+
+```text
+Automation RunTests Retry.Command.GroupAuthority
+```
+
+기대 테스트:
+
+- `Retry.Command.GroupAuthority.AssignsAndLogs`
+- `Retry.Command.GroupAuthority.RejectsInvalidOrMismatchedCommands`
+- `Retry.Command.GroupAuthority.PreventsReplacementAndRequiresTerminalClear`
+
+테스트는 임시 Preview World를 만들었다가 정리한다. 현재 열린 Level이나 Asset을 저장하지 않는다. 세 테스트의 Success와 함께 ensure, World cleanup 오류가 없는지도 확인한다.
+
+### 현재 통합 상태
+
+- [x] GroupManager Command 소유 및 assignment result 작성
+- [x] validation·Group ID·활성 Command 경계 작성
+- [x] 상태 전이와 Execution Log 연결
+- [x] Cancel/terminal Clear 규칙 작성
+- [x] 기존 `SetOrderForAll` 경로 무변경 확인
+- [x] 자동화 테스트 3개 작성
+- [x] 변경 파일 정적 검사
+- [x] 사용자 코드 반영
+- [x] Group Authority 자동화 테스트 3개 통과
+
+Unit 4는 **Integrated Complete** 상태다.
+
+Phase 4는 Command Status 3개, Validation 4개, Execution Log 3개, Group Authority 3개로 총 13개 자동화 테스트의 사용자 통과를 확인하여 **Feature Integrated Complete** 상태다.
+
+---
+
+## Phase 5 Unit 0 — ReconArea Preflight
+
+### 읽기 전용 조사 결과
+
+- `BB_NPC`의 기존 11개 key는 전투 의미로 유지한다.
+- `BT_LowIntelNPC`의 모든 CombatState decorator는 현재 `FlowAbortMode=None`이다.
+- 커스텀 `MoveToTarget`은 요청 직후 성공하고 `MoveToCover`는 이동 완료 callback이 없다.
+- Recon Mission 이동은 별도 branch에서 native `Move To`를 사용하는 방향이 안전하다.
+- 첫 구현 범위는 Objective Area와 Observation Point이며 Route marker는 후속으로 미룬다.
+- 기존 Scenario Level에는 새 Mission marker가 아직 없다.
+
+이 preflight에서는 Editor Asset을 열거나 변경하지 않았다. Marker 구조를 결정하고 C++ 타입을 만든 뒤 사용자 실습으로 Level에 배치한다.
+
+상태: **Complete / Marker Architecture Decided**
+
+---
+
+## Phase 5 Unit 1 — Marker Foundation
+
+### Codex가 구현한 것
+
+- abstract `ScenarioMarkerActor` 공통 기반
+- Objective Area 중심·반경과 에디터 Sphere 표시
+- Observation Point의 Objective 연결과 에디터 Arrow 표시
+- 공통 ID 중복, 반경, Objective 연결 구조화 validation
+- 기존 `Validate Scenario Setup`에 marker 검증 연결
+- marker 자동화 테스트 3개
+
+이번 변경은 새 `UCLASS`, `UENUM`, `USTRUCT`, Component를 포함한다. Live Coding으로 반영하되 native Actor가 Place Actors에 나타나지 않으면 Editor를 닫고 사용자 주도 빌드·재시작이 필요할 수 있다. Codex는 빌드를 실행하지 않는다.
+
+### 1. 자동화 검증
+
+Output Log에서 실행한다.
+
+```text
+Automation RunTests Retry.Scenario.Markers
+```
+
+기대 테스트:
+
+- `Retry.Scenario.Markers.AcceptsLinkedObjectiveAndObservation`
+- `Retry.Scenario.Markers.RejectsDuplicateIds`
+- `Retry.Scenario.Markers.RejectsInvalidAreaAndUnknownObjective`
+
+### 2. Level 배치
+
+자동화가 통과한 뒤 `Lvl_TS_ReconSecure_001`에서 진행한다.
+
+1. `Objective Area Actor` 하나를 작전 목표 지역 중앙에 배치한다.
+2. `Marker ID = ReconArea_A`, `Area Radius = 500`으로 시작한다.
+3. `Observation Point Actor` 두 개를 NavMesh 안의 서로 다른 관측 후보 위치에 배치한다.
+4. 첫 Point는 `Marker ID = ReconObs_A1`, 두 번째는 `ReconObs_A2`로 설정한다.
+5. 두 Point 모두 `Objective ID = ReconArea_A`로 설정한다.
+6. Arrow가 목표 지역을 향하도록 회전한다. 현재는 에디터 의미 표시이며 후속 관측 방향 평가에서 사용한다.
+7. `ScenarioInitializer`의 `Validate Scenario Setup`을 실행해 성공을 확인한다.
+8. 한 Point의 Objective ID를 임시로 `MissingArea`로 바꿔 실패 메시지를 확인한다.
+9. `ReconArea_A`로 복원하고 다시 성공한 뒤 Level을 저장한다.
+
+### 현재 통합 상태
+
+- [x] Marker 공통/전문 Actor와 Component 작성
+- [x] 구조화 marker validation 작성
+- [x] Scenario Initializer 검증 연결
+- [x] 자동화 테스트 3개 작성
+- [x] 변경 파일 정적 검사
+- [x] 사용자 코드 반영
+- [x] Marker 자동화 테스트 3개 통과
+- [x] Objective 1개와 Observation 2개 배치·연결
+- [x] 의도적 실패와 최종 성공 validation 확인
+
+Unit 1은 **Integrated Complete** 상태다.
+
+---
+
+## Phase 5 Unit 2 — Mission Overlay와 Blackboard 실행 투영
+
+### Codex가 구현한 것
+
+- `UNPCDecisionComponent`의 Mission Context 설정, 조회, 해제와 입력 검증
+- 기존 Decision Service 주기의 Blackboard 위치/이동 허용 값 투영
+- Idle/Patrol에서만 Mission 이동을 허용하는 전투 우선 규칙
+- `OnUnPossess()`에서 이전 Mission Context 정리
+- Mission Overlay 자동화 테스트 3개
+
+새 `UFUNCTION`과 `UPROPERTY`가 있으므로 Live Coding 반영이 불완전하면 사용자가 에디터를 닫고 직접 빌드·재시작한다. Codex는 빌드를 실행하지 않는다.
+
+### 1. 코드 반영 후 자동화 테스트
+
+Output Log에서 실행한다.
+
+```text
+Automation RunTests Retry.Mission.Overlay
+```
+
+기대 테스트:
+
+- `Retry.Mission.Overlay.AcceptsAndClearsValidContext`
+- `Retry.Mission.Overlay.RejectsInvalidContext`
+- `Retry.Mission.Overlay.AllowsOnlyIdleAndPatrolMovement`
+
+### 2. Blackboard key 추가
+
+테스트가 통과한 뒤 `/Game/AI/BB_NPC`를 열어 다음 두 key를 정확한 이름과 타입으로 추가한다.
+
+1. `MissionTargetLocation` — Vector
+2. `bMissionMovementAllowed` — Bool
+3. Blackboard를 저장한다.
+
+기존 `TargetActor`, `LastKnownEnemyLocation`, `CoverLocation` 등 전투 key는 수정하지 않는다. 새 key를 만들기 전에는 PIE를 실행하지 않는다. C++이 아직 존재하지 않는 key에 쓰려고 하면 missing key 경고가 생길 수 있다.
+
+### 3. Behavior Tree Mission branch 추가
+
+`/Game/AI/BT_LowIntelNPC`를 열고 root Selector의 자식 순서를 확인한다.
+
+1. Alert branch 바로 다음, Patrol branch 바로 앞에 새 Sequence를 추가하고 `Mission Movement`로 알아보기 쉽게 표시한다.
+2. Sequence에 Blackboard decorator를 추가한다.
+3. Blackboard Key는 `bMissionMovementAllowed`, 조건은 `Is Set` 또는 `true`로 설정한다.
+4. decorator의 `Observer Aborts`는 `Self`로 설정한다.
+5. Sequence 자식으로 엔진 기본 `Move To` Task를 추가한다.
+6. `Blackboard Key = MissionTargetLocation`으로 설정한다.
+7. `Acceptable Radius = 100`으로 시작한다. 목적지 주변에서 멈추는 반경이며 실제 레벨 체감에 따라 후속 조정한다.
+8. 기존 CombatState decorator와 기존 branch 순서는 그 외에는 변경하지 않는다.
+9. Behavior Tree를 저장하고 compiler/error 표시가 없는지 확인한다.
+
+현재는 Mission Resolver/Group dispatch가 없어 runtime에서 `SetMissionContext()`를 호출하지 않는다. 따라서 이 단위의 성공 기준은 테스트 3개 통과, 두 Blackboard key 존재, BT branch 배선과 저장 성공이다. 실제 관측점 이동은 다음 연결 단위에서 검증한다.
+
+### 현재 통합 상태
+
+- [x] Mission Context overlay와 validation 작성
+- [x] Blackboard 투영 및 UnPossess 정리 작성
+- [x] 전투 상태별 이동 허용 규칙 작성
+- [x] 자동화 테스트 3개 작성
+- [x] 사용자 코드 반영
+- [x] Mission Overlay 테스트 3개 통과
+- [x] Blackboard key 2개 추가
+- [x] Mission Sequence/decorator/native Move To 배선
+
+Unit 2는 **Integrated Complete** 상태다.
 
 ---
 
@@ -525,3 +1155,28 @@ LLM 서버 성공 응답과 `SetOrderForAll` 적용은 Phase 2 계획 작성 자
 - 선택된 actor/asset은 모두 `[]`이며 최상위 창은 기존 `Retry - 언리얼 에디터` 하나뿐이다.
 - 확인한 level/BB/BT/enum/BP asset의 dirty 상태는 모두 false였다.
 - 이후 MCP 작업은 저장소 루트 `AGENTS.md`의 Unreal Editor MCP 작업 절차를 따른다.
+
+## 13. LLM 요청 수명주기 수정 후 수동 검증
+
+이 검증은 수정된 `UnrealEditor-Retry.dll`을 로드하도록 Unreal Editor를 완전히 종료하고 `RetryEditor Win64 Development` 빌드를 성공시킨 뒤 새로 실행해야 한다. Live Coding으로 대체하지 않는다.
+
+### 재현 조건 검증
+
+1. 로컬 LLM 서버를 실행하지 않는다.
+2. `Lvl_TS_ReconSecure_001`에서 PIE를 시작하고 그룹 threshold가 LLM 요청을 만들 때까지 진행한다.
+3. `[LLMQueue] ProcessRequest 시작 성공: 1` 직후 PIE를 중단한다.
+4. editor가 유지되고 crash report가 생성되지 않는지 확인한다.
+5. 로그에서 World cleanup 시 `[LLMQueue] 전환 정리 — 활성 요청 취소:1`이 한 번 기록되는지 확인한다.
+6. PIE 종료 뒤 해당 요청의 fallback, group response 적용 또는 `ProcessNext()` 로그가 새로 기록되지 않는지 확인한다.
+
+사용자 확인 결과, 요청 중 PIE 종료 시 활성 요청 취소 로그가 기록되고 editor가 유지됐다. 최초 crash 재현 경로는 통합 검증 완료다.
+
+### 실행 중 연결 실패 검증
+
+1. 로컬 LLM 서버를 끈 상태로 PIE를 유지한다.
+2. 연결 실패 callback이 도착해도 editor가 유지되는지 확인한다.
+3. 요청 하나당 callback, fallback, 다음 queue 진행이 각각 한 번만 발생하는지 확인한다.
+
+### 지연 응답 검증
+
+응답을 `TimeoutSeconds`보다 늦게 반환할 수 있는 테스트 서버가 있을 때 수행한다. timeout 뒤 늦은 응답이 게임 상태에 적용되지 않고, 다음 pending request의 timeout이나 완료를 방해하지 않아야 한다.

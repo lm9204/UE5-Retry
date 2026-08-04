@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
+#include "AI/CommandTypes.h"
 #include "NPCContext.h"
 #include "NPCDecisionComponent.generated.h"
 
@@ -63,6 +64,20 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Group")
 	void SetOrder(ENPCOrder Order, float Weight);
 
+	UFUNCTION(BlueprintCallable, Category="Mission")
+	bool SetMissionContext(const FMissionContext& MissionContext);
+
+	UFUNCTION(BlueprintCallable, Category="Mission")
+	void ClearMissionContext();
+
+	UFUNCTION(BlueprintPure, Category="Mission")
+	bool HasActiveMission() const;
+
+	UFUNCTION(BlueprintPure, Category="Mission")
+	FMissionContext GetActiveMissionContext() const;
+
+	bool IsMissionMovementAllowedForState(ENPCCombatState State) const;
+
 	// 디버그
 	UPROPERTY(EditAnywhere, Category="Debug")
 	bool bDebugEnabled = false;
@@ -110,6 +125,12 @@ private:
 	float			TimeSinceCoverSearch = 0.f;
 	float			PendingOrderWeight = 0.f;
 	bool			bWasTargetSetLastTick = false;
+
+	UPROPERTY(Transient)
+	FMissionContext ActiveMissionContext;
+
+	UPROPERTY(Transient)
+	bool bHasActiveMission = false;
 
 	static constexpr int32 MaxHistorySize = 10;
 	

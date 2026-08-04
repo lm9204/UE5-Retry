@@ -16,12 +16,61 @@ void ULLMRequestQueue::Initialize(FSubsystemCollectionBase& Collection)
 {
     Super::Initialize(Collection);
 
+    FWorldDelegates::OnWorldCleanup.AddUObject(this, &ULLMRequestQueue::HandleWorldCleanup);
+
     FallbackDialogueTable = LoadObject<UDataTable>(nullptr,
         TEXT("/Game/UI/DT_FallbackDialogue.DT_FallbackDialogue"));
 
     if (!FallbackDialogueTable)
     {
         UE_LOG(LogTemp, Error, TEXT("[LLMQueue] FallbackDialogueTable 로드 실패"));
+    }
+}
+
+void ULLMRequestQueue::Deinitialize()
+{
+    FWorldDelegates::OnWorldCleanup.RemoveAll(this);
+    ResetQueueForScenarioTransition();
+    FallbackDialogueTable = nullptr;
+
+    Super::Deinitialize();
+}
+
+void ULLMRequestQueue::ResetQueueForScenarioTransition()
+{
+    ++RequestGeneration;
+
+    FLLMRequest DiscardedRequest;
+    int32 DiscardedCount = 0;
+    while (PendingRequests.Dequeue(DiscardedRequest))
+    {
+        ++DiscardedCount;
+    }
+
+    const bool bHadActiveRequest = ActiveRequest.IsValid();
+    if (ActiveRequest.IsValid())
+    {
+        ActiveRequest->OnProcessRequestComplete().Unbind();
+        ActiveRequest->CancelRequest();
+        ActiveRequest.Reset();
+    }
+
+    bIsProcessing = false;
+
+    if (bHadActiveRequest || DiscardedCount > 0)
+    {
+        UE_LOG(LogTemp, Warning,
+            TEXT("[LLMQueue] 전환 정리 — 활성 요청 취소:%d, 대기 요청 폐기:%d, Generation:%llu"),
+            bHadActiveRequest, DiscardedCount, RequestGeneration);
+    }
+}
+
+void ULLMRequestQueue::HandleWorldCleanup(
+    UWorld* World, bool bSessionEnded, bool bCleanupResources)
+{
+    if (World && World->GetGameInstance() == GetGameInstance())
+    {
+        ResetQueueForScenarioTransition();
     }
 }
 
@@ -78,17 +127,18 @@ void ULLMRequestQueue::SendRequest(const FLLMRequest& Request)
         return;
     }
 
-    float SendTime = GetWorld()->GetTimeSeconds();
+    const double SendTime = FPlatformTime::Seconds();
     UE_LOG(LogTemp, Warning,
-        TEXT("[LLMQueue][#%d] 전송 시작 — Type:%s, PromptLen:%d, WorldTime:%.2f"),
+        TEXT("[LLMQueue][#%d] 전송 시작 — Type:%s, PromptLen:%d"),
         Request.RequestID,
         bIsGroupRequest ? TEXT("Group") : TEXT("Individual"),
-        Request.Prompt.Len(), SendTime);
+        Request.Prompt.Len());
 
     TSharedRef<IHttpRequest> HttpRequest = FHttpModule::Get().CreateRequest();
     HttpRequest->SetURL(ServerURL);
     HttpRequest->SetVerb(TEXT("POST"));
     HttpRequest->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
+    HttpRequest->SetTimeout(TimeoutSeconds);
 
     // JSON Body 구성
     TSharedPtr<FJsonObject> RootObj = MakeShared<FJsonObject>();
@@ -109,25 +159,31 @@ void ULLMRequestQueue::SendRequest(const FLLMRequest& Request)
     HttpRequest->SetContentAsString(Body);
 
     FLLMRequest RequestCopy = Request;
-
-    GetWorld()->GetTimerManager().SetTimer(TimeoutTimerHandle,
-        [this, RequestCopy]()
-        {
-            UE_LOG(LogTemp, Error,
-                TEXT("[LLMQueue][#%d] 타임아웃(%.0f초) — 폴백 처리"),
-                RequestCopy.RequestID, TimeoutSeconds);
-
-            ApplyFallback(RequestCopy);
-            ProcessNext();
-        }, TimeoutSeconds, false);
+    const uint64 Generation = RequestGeneration;
+    TWeakObjectPtr<ULLMRequestQueue> WeakThis(this);
 
     HttpRequest->OnProcessRequestComplete().BindLambda(
-        [this, RequestCopy, SendTime](FHttpRequestPtr Req, FHttpResponsePtr Resp, bool bSuccess)
+        [WeakThis, RequestCopy, SendTime, Generation](
+            FHttpRequestPtr Req, FHttpResponsePtr Resp, bool bSuccess)
         {
-            GetWorld()->GetTimerManager().ClearTimer(TimeoutTimerHandle);
+            ULLMRequestQueue* Queue = WeakThis.Get();
+            if (!Queue)
+            {
+                return;
+            }
+
+            if (Queue->RequestGeneration != Generation || Queue->ActiveRequest != Req)
+            {
+                UE_LOG(LogTemp, Verbose,
+                    TEXT("[LLMQueue][#%d] 이전 실행의 늦은 콜백 무시"),
+                    RequestCopy.RequestID);
+                return;
+            }
+
+            Queue->ActiveRequest.Reset();
 
             // 추가 — 걸린 시간 계산
-            float ElapsedTime = GetWorld()->GetTimeSeconds() - SendTime;
+            const double ElapsedTime = FPlatformTime::Seconds() - SendTime;
 
             UE_LOG(LogTemp, Warning,
                 TEXT("[LLMQueue][#%d] 콜백 도착 — bSuccess:%d, RespValid:%d, 소요:%.2f초"),
@@ -148,8 +204,8 @@ void ULLMRequestQueue::SendRequest(const FLLMRequest& Request)
                         TEXT("[LLMQueue][#%d] Resp 자체가 무효"), RequestCopy.RequestID);
                 }
 
-                ApplyFallback(RequestCopy);
-                ProcessNext();
+                Queue->ApplyFallback(RequestCopy);
+                Queue->ProcessNext();
                 return;
             }
 
@@ -161,7 +217,7 @@ void ULLMRequestQueue::SendRequest(const FLLMRequest& Request)
             {
                 if (RequestCopy.TargetGroup.IsValid())
                 {
-                    ParseAndApplyGroupResponse(
+                    Queue->ParseAndApplyGroupResponse(
                         Resp->GetContentAsString(), RequestCopy.TargetGroup.Get());
                 }
                 else
@@ -173,43 +229,28 @@ void ULLMRequestQueue::SendRequest(const FLLMRequest& Request)
             }
             else
             {
-                ParseAndApplyResponse(
+                Queue->ParseAndApplyResponse(
                     Resp->GetContentAsString(),
                     RequestCopy.TargetPersonality.Get(),
                     RequestCopy.TargetActor.Get());
             }
 
-            ProcessNext();
+            Queue->ProcessNext();
         });
 
+    ActiveRequest = HttpRequest;
     bool bStarted = HttpRequest->ProcessRequest();
     UE_LOG(LogTemp, Warning,
         TEXT("[LLMQueue][#%d] ProcessRequest 시작 성공: %d"),
         Request.RequestID, bStarted);
-}
 
-void ULLMRequestQueue::OnResponseReceived(FHttpRequestPtr Req, FHttpResponsePtr Resp,
-    bool bSuccess, FLLMRequest Request)
-{
-    GetWorld()->GetTimerManager().ClearTimer(TimeoutTimerHandle);
-
-    if (!bSuccess || !Resp.IsValid() || !Request.TargetPersonality.IsValid())
+    if (!bStarted)
     {
-        ApplyFallback(Request);
+        HttpRequest->OnProcessRequestComplete().Unbind();
+        ActiveRequest.Reset();
+        ApplyFallback(RequestCopy);
         ProcessNext();
-        return;
     }
-
-    FString ResponseStr = Resp->GetContentAsString();
-    UE_LOG(LogTemp, Warning, TEXT("[LLMQueue] 응답 수신: %s"), *ResponseStr);
-
-    ParseAndApplyResponse(
-        Resp->GetContentAsString(),
-        Request.TargetPersonality.Get(),
-        Request.TargetActor.Get()
-    );
-
-    ProcessNext();
 }
 
 void ULLMRequestQueue::ParseAndApplyResponse(
@@ -446,7 +487,7 @@ void ULLMRequestQueue::EnqueueGroupRequest(AGroupManagerActor* Group)
     Request.RequestType = ELLMRequestType::GroupCommand;
     Request.TargetGroup = Group;
     Request.Prompt = Group->BuildGroupLLMPrompt();
-    Request.RequestTime = GetWorld()->GetTimeSeconds();
+    Request.RequestTime = static_cast<float>(FPlatformTime::Seconds());
 
     Enqueue(Request);
 }

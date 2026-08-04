@@ -9,6 +9,7 @@
 #include "RetryPlayerController.generated.h"
 
 class UInputMappingContext;
+class UScenarioDebugWidget;
 class UUserWidget;
 class UInputAction;
 
@@ -52,6 +53,9 @@ protected:
 
 	UPROPERTY(EditDefaultsOnly, Category="UI")
 	TSubclassOf<ULootWidget> LootWidgetClass;
+
+	UPROPERTY(EditDefaultsOnly, Category="UI|Scenario")
+	TSubclassOf<UScenarioDebugWidget> ScenarioDebugWidgetClass;
 	
 	UPROPERTY(EditDefaultsOnly, Category="UI")
 	TObjectPtr<UInputAction> IA_Inventory;
@@ -61,6 +65,9 @@ protected:
 
 	UPROPERTY(EditDefaultsOnly, Category="Input")
 	TObjectPtr<UInputAction> IA_Reload;
+
+	UPROPERTY(EditDefaultsOnly, Category="Input|Actions")
+	TObjectPtr<UInputAction> IA_ScenarioDebug;
 	
 	UPROPERTY()
 	UInventoryWidget* InventoryWidget;
@@ -71,6 +78,9 @@ protected:
 	UPROPERTY()
 	UUserWidget* PlayerHUDWidget;
 
+	UPROPERTY(Transient)
+	TObjectPtr<UScenarioDebugWidget> ScenarioDebugWidget;
+
 
 	/** Gameplay initialization */
 	virtual void BeginPlay() override;
@@ -80,6 +90,7 @@ protected:
 private:
 	void OnClickMove();
 	void ToggleInventory();
+	void ToggleScenarioDebug();
 
 	// Weapon
 	void OnFireStarted();

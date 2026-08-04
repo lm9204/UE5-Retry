@@ -14,6 +14,12 @@
 #include "Debug/CombatLogging.h"
 #include "GameFramework/Character.h"
 
+namespace MissionBlackboard
+{
+	const FName TargetLocationKey = TEXT("MissionTargetLocation");
+	const FName MovementAllowedKey = TEXT("bMissionMovementAllowed");
+}
+
 UNPCDecisionComponent::UNPCDecisionComponent()
 {
     PrimaryComponentTick.bCanEverTick = false;
@@ -236,6 +242,20 @@ void UNPCDecisionComponent::WriteBlackboard()
     if (CachedContext.bCanSeeTarget && CachedContext.Target)
         BB->SetValueAsVector(TEXT("LastKnownEnemyLocation"),
             CachedContext.Target->GetActorLocation());
+
+	BB->SetValueAsBool(
+		MissionBlackboard::MovementAllowedKey,
+		IsMissionMovementAllowedForState(CurrentState));
+	if (bHasActiveMission)
+	{
+		BB->SetValueAsVector(
+			MissionBlackboard::TargetLocationKey,
+			ActiveMissionContext.ObjectiveLocation);
+	}
+	else
+	{
+		BB->ClearValue(MissionBlackboard::TargetLocationKey);
+	}
 }
 
 // ────────────────────────────────────────────────────
@@ -731,4 +751,43 @@ void UNPCDecisionComponent::SetOrder(ENPCOrder Order, float Weight)
 {
     PendingOrder = Order;
     PendingOrderWeight = Weight;
+}
+
+bool UNPCDecisionComponent::SetMissionContext(
+	const FMissionContext& MissionContext)
+{
+	if (!MissionContext.CommandId.IsValid()
+		|| MissionContext.ObjectiveId.IsNone()
+		|| MissionContext.ObjectiveLocation.ContainsNaN())
+	{
+		return false;
+	}
+
+	ActiveMissionContext = MissionContext;
+	bHasActiveMission = true;
+	return true;
+}
+
+void UNPCDecisionComponent::ClearMissionContext()
+{
+	ActiveMissionContext = FMissionContext();
+	bHasActiveMission = false;
+}
+
+bool UNPCDecisionComponent::HasActiveMission() const
+{
+	return bHasActiveMission;
+}
+
+FMissionContext UNPCDecisionComponent::GetActiveMissionContext() const
+{
+	return bHasActiveMission ? ActiveMissionContext : FMissionContext();
+}
+
+bool UNPCDecisionComponent::IsMissionMovementAllowedForState(
+	const ENPCCombatState State) const
+{
+	return bHasActiveMission
+		&& (State == ENPCCombatState::Idle
+			|| State == ENPCCombatState::Patrol);
 }

@@ -1,10 +1,55 @@
 ﻿#include "GroupManagerActor.h"
 
 #include "AIController.h"
+#include "Engine/GameInstance.h"
 #include "LLMRequestQueue.h"
 #include "RetryNPCCharacter.h"
 #include "Components/NPCDecisionComponent.h"
 #include "Components/PersonalityComponent.h"
+#include "Scenario/ScenarioExecutionLogSubsystem.h"
+#include "Scenario/ScenarioRuntimeSubsystem.h"
+
+namespace GroupCommand
+{
+	FCommandAssignmentResult MakeResult(
+		const ECommandAssignmentOutcome Outcome,
+		const FString& Message)
+	{
+		FCommandAssignmentResult Result;
+		Result.Outcome = Outcome;
+		Result.Message = FText::FromString(Message);
+		return Result;
+	}
+
+	FString BuildValidationMessage(
+		const FCommandValidationResult& Validation)
+	{
+		TArray<FString> Messages;
+		Messages.Reserve(Validation.Issues.Num());
+		for (const FCommandValidationIssue& Issue : Validation.Issues)
+		{
+			Messages.Add(Issue.Message.ToString());
+		}
+		return FString::Join(Messages, TEXT(" | "));
+	}
+
+	void RecordRejection(
+		UScenarioExecutionLogSubsystem* ExecutionLog,
+		const FGuid& RunId,
+		const FCommandIntent& Command,
+		const FName GroupId,
+		const FName ResultCode,
+		const FString& Message)
+	{
+		ExecutionLog->RecordCommandEvent(
+			RunId,
+			Command.CommandId,
+			GroupId,
+			EScenarioExecutionEventType::CommandValidationRejected,
+			ResultCode,
+			Message);
+	}
+}
 
 AGroupManagerActor::AGroupManagerActor()
 {
@@ -124,6 +169,265 @@ void AGroupManagerActor::SetOrderForAll(ENPCOrder Order, float Weight)
     UE_LOG(LogTemp, Warning,
         TEXT("[Group:%s] 전체 명령 전파: Weight=%.2f (%d명)"),
         *GroupID, Weight, Members.Num());
+}
+
+FCommandAssignmentResult AGroupManagerActor::AssignCommand(
+	const FCommandIntent& Command)
+{
+	UGameInstance* GameInstance = GetGameInstance();
+	UScenarioRuntimeSubsystem* Runtime = GameInstance
+		? GameInstance->GetSubsystem<UScenarioRuntimeSubsystem>()
+		: nullptr;
+	if (!Runtime)
+	{
+		return GroupCommand::MakeResult(
+			ECommandAssignmentOutcome::NoActiveScenario,
+			TEXT("A Scenario run is required before assigning a command."));
+	}
+
+	const FScenarioRunContext RunContext = Runtime->GetCurrentRunContext();
+	if (!RunContext.IsValid())
+	{
+		return GroupCommand::MakeResult(
+			ECommandAssignmentOutcome::NoActiveScenario,
+			TEXT("A Scenario run is required before assigning a command."));
+	}
+
+	UScenarioExecutionLogSubsystem* ExecutionLog =
+		GameInstance->GetSubsystem<UScenarioExecutionLogSubsystem>();
+	return AssignCommandForRun(Command, RunContext.RunId, ExecutionLog);
+}
+
+FCommandAssignmentResult AGroupManagerActor::AssignCommandForRun(
+	const FCommandIntent& Command,
+	const FGuid& RunId,
+	UScenarioExecutionLogSubsystem* ExecutionLog)
+{
+	if (!ExecutionLog || !ExecutionLog->IsRecordingRun(RunId))
+	{
+		return GroupCommand::MakeResult(
+			ECommandAssignmentOutcome::ExecutionLogUnavailable,
+			TEXT("The active Scenario run is not available for command logging."));
+	}
+
+	const FName CommandGroupId = GetCommandGroupId();
+	if (CommandGroupId.IsNone())
+	{
+		const FString Message = TEXT("The Group Manager requires a Group ID.");
+		GroupCommand::RecordRejection(
+			ExecutionLog, RunId, Command, NAME_None,
+			TEXT("InvalidGroupConfiguration"), Message);
+		return GroupCommand::MakeResult(
+			ECommandAssignmentOutcome::InvalidGroupConfiguration, Message);
+	}
+
+	if (bHasCurrentCommand && !IsCommandStatusTerminal(CurrentCommand.Status))
+	{
+		const FString Message = TEXT(
+			"The current non-terminal command must finish or be cancelled first.");
+		GroupCommand::RecordRejection(
+			ExecutionLog, RunId, Command, CommandGroupId,
+			TEXT("ActiveCommandExists"), Message);
+		return GroupCommand::MakeResult(
+			ECommandAssignmentOutcome::ActiveCommandExists, Message);
+	}
+
+	const FCommandValidationResult Validation =
+		FCommandValidator::Validate(Command);
+	if (!Validation.IsValid())
+	{
+		const FString Message = GroupCommand::BuildValidationMessage(Validation);
+		GroupCommand::RecordRejection(
+			ExecutionLog, RunId, Command, CommandGroupId,
+			TEXT("ValidationRejected"), Message);
+		FCommandAssignmentResult Result = GroupCommand::MakeResult(
+			ECommandAssignmentOutcome::ValidationRejected, Message);
+		Result.Validation = Validation;
+		return Result;
+	}
+
+	if (Command.AssignedGroupId != CommandGroupId)
+	{
+		const FString Message = FString::Printf(
+			TEXT("Command group '%s' does not match Group Manager '%s'."),
+			*Command.AssignedGroupId.ToString(), *CommandGroupId.ToString());
+		GroupCommand::RecordRejection(
+			ExecutionLog, RunId, Command, CommandGroupId,
+			TEXT("GroupMismatch"), Message);
+		return GroupCommand::MakeResult(
+			ECommandAssignmentOutcome::GroupMismatch, Message);
+	}
+
+	if (!ExecutionLog->RecordCommandEvent(
+		RunId,
+		Command.CommandId,
+		CommandGroupId,
+		EScenarioExecutionEventType::CommandValidated,
+		TEXT("ValidationSucceeded"),
+		TEXT("Command validation succeeded.")).IsValid())
+	{
+		return GroupCommand::MakeResult(
+			ECommandAssignmentOutcome::ExecutionLogUnavailable,
+			TEXT("Command validation could not be recorded."));
+	}
+
+	FCommandIntent AssignedCommand = Command;
+	const ECommandStatus AssignmentStatuses[] =
+	{
+		ECommandStatus::Validated,
+		ECommandStatus::Assigned,
+	};
+
+	for (const ECommandStatus NewStatus : AssignmentStatuses)
+	{
+		const ECommandStatus PreviousStatus = AssignedCommand.Status;
+		FText TransitionError;
+		if (!TryTransitionCommandStatus(
+			AssignedCommand, NewStatus, TransitionError))
+		{
+			return GroupCommand::MakeResult(
+				ECommandAssignmentOutcome::TransitionRejected,
+				TransitionError.ToString());
+		}
+
+		if (!ExecutionLog->RecordCommandStatusTransition(
+			RunId,
+			AssignedCommand.CommandId,
+			CommandGroupId,
+			PreviousStatus,
+			NewStatus,
+			TEXT("AssignmentProgressed"),
+			TEXT("Command assignment status progressed.")).IsValid())
+		{
+			return GroupCommand::MakeResult(
+				ECommandAssignmentOutcome::ExecutionLogUnavailable,
+				TEXT("Command assignment status could not be recorded."));
+		}
+	}
+
+	ForceClearCurrentCommand();
+	CurrentCommand = MoveTemp(AssignedCommand);
+	bHasCurrentCommand = true;
+	return GroupCommand::MakeResult(
+		ECommandAssignmentOutcome::Assigned,
+		TEXT("Command validated and assigned."));
+}
+
+bool AGroupManagerActor::TransitionCurrentCommandStatus(
+	const ECommandStatus NewStatus,
+	const FName ResultCode,
+	const FString& Message)
+{
+	UGameInstance* GameInstance = GetGameInstance();
+	UScenarioRuntimeSubsystem* Runtime = GameInstance
+		? GameInstance->GetSubsystem<UScenarioRuntimeSubsystem>()
+		: nullptr;
+	if (!Runtime)
+	{
+		return false;
+	}
+
+	const FScenarioRunContext RunContext = Runtime->GetCurrentRunContext();
+	UScenarioExecutionLogSubsystem* ExecutionLog = RunContext.IsValid()
+		? GameInstance->GetSubsystem<UScenarioExecutionLogSubsystem>()
+		: nullptr;
+	return TransitionCurrentCommandStatusForRun(
+		NewStatus, ResultCode, Message, RunContext.RunId, ExecutionLog);
+}
+
+bool AGroupManagerActor::TransitionCurrentCommandStatusForRun(
+	const ECommandStatus NewStatus,
+	const FName ResultCode,
+	const FString& Message,
+	const FGuid& RunId,
+	UScenarioExecutionLogSubsystem* ExecutionLog)
+{
+	if (!bHasCurrentCommand
+		|| !CanTransitionCommandStatus(CurrentCommand.Status, NewStatus)
+		|| !ExecutionLog
+		|| !ExecutionLog->IsRecordingRun(RunId))
+	{
+		return false;
+	}
+
+	const ECommandStatus PreviousStatus = CurrentCommand.Status;
+	const FName EffectiveResultCode = ResultCode.IsNone()
+		? FName(TEXT("StatusChanged"))
+		: ResultCode;
+	if (!ExecutionLog->RecordCommandStatusTransition(
+		RunId,
+		CurrentCommand.CommandId,
+		GetCommandGroupId(),
+		PreviousStatus,
+		NewStatus,
+		EffectiveResultCode,
+		Message).IsValid())
+	{
+		return false;
+	}
+
+	FText TransitionError;
+	return TryTransitionCommandStatus(
+		CurrentCommand, NewStatus, TransitionError);
+}
+
+bool AGroupManagerActor::CancelCurrentCommand(const FName ReasonCode)
+{
+	const FName EffectiveReason = ReasonCode.IsNone()
+		? FName(TEXT("CancelledByIssuer"))
+		: ReasonCode;
+	return TransitionCurrentCommandStatus(
+		ECommandStatus::Cancelled,
+		EffectiveReason,
+		TEXT("Command cancelled."));
+}
+
+bool AGroupManagerActor::ClearCurrentCommand()
+{
+	if (!bHasCurrentCommand)
+	{
+		return true;
+	}
+
+	if (!IsCommandStatusTerminal(CurrentCommand.Status))
+	{
+		return false;
+	}
+
+	ForceClearCurrentCommand();
+	return true;
+}
+
+bool AGroupManagerActor::HasCurrentCommand() const
+{
+	return bHasCurrentCommand;
+}
+
+FCommandIntent AGroupManagerActor::GetCurrentCommand() const
+{
+	return bHasCurrentCommand ? CurrentCommand : FCommandIntent();
+}
+
+void AGroupManagerActor::ResetGroupRuntimeState()
+{
+    GroupMemories.Reset();
+    AccumulatedEmotionScore = 0.f;
+	ForceClearCurrentCommand();
+
+    // Leader and Members describe the placed level configuration. They may already
+    // have been registered depending on actor BeginPlay order, so preserve them.
+    SetOrderForAll(ENPCOrder::HoldFire, 0.f);
+}
+
+FName AGroupManagerActor::GetCommandGroupId() const
+{
+	return FName(*GroupID.TrimStartAndEnd());
+}
+
+void AGroupManagerActor::ForceClearCurrentCommand()
+{
+	CurrentCommand = FCommandIntent();
+	bHasCurrentCommand = false;
 }
 
 FString AGroupManagerActor::BuildGroupLLMPrompt() const

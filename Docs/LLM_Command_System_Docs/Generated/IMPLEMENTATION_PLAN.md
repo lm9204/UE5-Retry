@@ -123,6 +123,37 @@ All transitions
 | `Config/DefaultEngine.ini` | 에디터 통합 후 `Lvl_ScenarioMenu`를 Game Default Map으로 지정. 기존 Editor Startup Map 변경은 별도 사용자 확인 후 수행 |
 | `Config/DefaultGame.ini` | Project Settings에서 등록한 Scenario soft reference 저장 |
 
+### Phase 3 선행 결함 수정 — LLM 요청 수명주기
+
+2026-08-03 PIE 종료 중 발생한 크래시를 다음 순서로 확인했다.
+
+```text
+그룹 LLM HTTP 요청 시작
+→ PIE World teardown/cleanup
+→ 로컬 서버 연결 실패 callback 도착
+→ callback이 GetWorld()->GetTimerManager() 호출
+→ null World 역참조로 editor crash
+```
+
+`ULLMRequestQueue`는 GameInstance 수명의 객체지만 요청 대상 Actor와 기존 timeout timer는 World 수명이었다. 따라서 폴백 내용과 관계없이 callback이 폴백에 도달하기 전에 크래시할 수 있었다.
+
+수정 기준:
+
+- World timer 대신 `IHttpRequest::SetTimeout()`으로 HTTP 요청 자체가 timeout을 소유한다.
+- queue가 현재 `ActiveRequest`를 소유하고 reset/deinitialize/world cleanup에서 delegate를 해제한 뒤 취소한다.
+- reset마다 `RequestGeneration`을 증가시키고 callback은 같은 generation의 현재 active request만 완료한다.
+- callback은 raw `this` 대신 `TWeakObjectPtr<ULLMRequestQueue>`를 사용한다.
+- timeout, 연결 실패, 정상 응답, 시작 실패가 모두 요청당 한 번만 `ProcessNext()`로 진행한다.
+- `ResetQueueForScenarioTransition()`은 pending request도 폐기하여 이전 World의 작업을 다음 Run에 적용하지 않는다.
+
+완료 검증:
+
+1. `RetryEditor Win64 Development` 빌드.
+2. 로컬 LLM 서버를 끈 상태에서 요청 실패가 폴백으로 끝나고 다음 요청이 한 번만 처리되는지 확인.
+3. 요청 직후 PIE를 중단해 editor crash와 late callback 적용이 없는지 확인.
+4. 응답을 timeout 이후까지 지연시켜 fallback/queue advance가 중복되지 않는지 확인.
+5. active 및 pending 요청이 있는 상태에서 Restart/Return 후 이전 Run의 결과가 적용되지 않는지 확인.
+
 ### Blueprint 노출 API 계획
 
 - `UScenarioRuntimeSubsystem::GetRegisteredScenarios()` — `WBP_ScenarioSelect` 목록 표시용, 읽기 전용.
@@ -151,6 +182,53 @@ All transitions
 7. Editor 통합 뒤 PIE에서 Start → Restart → Return 반복.
 8. 통합 완료 게이트에서 등록 map cook/package 열기 검증.
 
+### Phase 3 Unit 4 구현 상태
+
+상태: **Integrated Complete**
+
+- `AScenarioInitializer`는 지정 Definition과 현재 Level, Group/NPC ID, Group 참조, Team ID, 그룹별 단일 Leader를 검증한다.
+- `BeginPlay`는 활성 `FScenarioRunContext`가 있을 때만 Seed와 런타임 reset을 적용한다. 직접 연 Level의 PIE는 기존 테스트 흐름을 보존하기 위해 경고 후 초기화를 건너뛴다.
+- `AGroupManagerActor::ResetGroupRuntimeState()`는 배치 관계인 `Leader/Members`를 보존하고 group memory, 감정 누적치, 현재 명령만 초기화한다.
+- `UMemoryComponent::ResetMemories()`는 개인 memory와 감정 누적치를 초기화한다.
+- `bAutoStart`의 실제 Command 시작 연결은 Command 계층이 생긴 후 수행하며, Unit 4에서는 Run Context 값과 초기화 로그만 확정한다.
+- 사용자 통합: Initializer 배치, Definition 연결, Group Team ID 설정, `Validate Scenario Setup` 실행.
+- 사용자 검증: Team ID 불일치 거부와 Team ID 1/2 정상 구성 성공을 모두 확인했다.
+- 후속 회귀 수정: 투사체를 전용 `Projectile` object channel로 분리한다. 사용자가 Project Settings에서 채널을 생성하고 실제 할당 번호를 확인한 뒤 C++ 상수와 맞춘다. 사망 Capsule은 `NoCollision`, Ragdoll Mesh는 WorldStatic/WorldDynamic을 Block하고 Projectile만 Ignore한다.
+- 사용자 회귀 검증: Ragdoll의 바닥 충돌과 시체를 통과하는 투사체가 모두 정상 동작했다.
+
+### Phase 3 Unit 5 구현 상태
+
+상태: **Integrated Complete**
+
+- UI 방식은 Registry 기반 동적 목록 + 선택 Scenario 상세 패널로 확정했다.
+- `UScenarioSelectWidget`은 등록 목록 보관, 선택 유효성 검사, Definition 기본 옵션 복사, `StartScenario()` 호출을 담당한다.
+- Widget Blueprint는 목록 Entry 생성, 텍스트/옵션 표시, 오류 메시지와 시각적 선택 상태를 담당한다.
+- 메뉴 UI 생성은 Level Blueprint가 아니라 전용 `BP_ScenarioMenuPlayerController`가 담당한다.
+- 사용자 통합: `Lvl_ScenarioMenu`, `WBP_ScenarioSelect`, `WBP_ScenarioEntry`, 메뉴 Controller/GameMode Blueprint 생성 및 연결.
+- 사용자 검증: 동적 목록과 상세 옵션 표시, Seed 전달, 실제 OpenLevel, Initializer 성공 로그와 전투 레벨 정상 동작을 확인했다.
+- 사용자가 Project Settings에서 `GameDefaultMap`을 `Lvl_ScenarioMenu`로 설정했고 `EditorStartupMap`은 기존 값을 유지했다.
+
+### Phase 3 Unit 6 구현 상태
+
+상태: **Integrated Complete**
+
+- 인게임 디버그 UI는 기존 전투 PlayerController가 소유하는 `F12` 토글 전용 Widget으로 확정했다. F9/F10/F11은 UE Editor 기본 명령과 충돌하므로 사용하지 않는다.
+- `UScenarioDebugWidget`은 Run Context 조회와 Restart/Return의 안전한 호출 경계를 담당한다.
+- `ARetryPlayerController`는 Widget을 숨김 상태로 생성하고 Enhanced Input Action으로 표시를 토글한다.
+- Restart는 같은 Scenario/옵션을 보존하고 새 Run ID로 Level을 다시 연다.
+- Return은 LLM queue를 정리하고 Context를 inactive로 만든 뒤 메뉴 Level을 연다.
+- 사용자 통합: `IA_ScenarioDebug`, `IMC_Default`의 F12 mapping, `WBP_ScenarioDebug`, `BP_ThirdPersonPlayerController` Class Defaults 연결.
+- 사용자 검증: F12 패널 토글과 Restart/Return Level 전환이 모두 정상 동작했다.
+- 사용자 회귀 검증: 활성 LLM 요청 중 Restart/Return에서 active request 취소, crash 방지, 이전 Run callback 미적용을 확인했다.
+
+### Phase 3 완료 판정
+
+상태: **Feature Integrated Complete / Packaging Gate Pending**
+
+- Scenario Definition, Registry, RuntimeSubsystem, Initializer, 동적 메뉴 UI, Restart/Return 디버그 패널의 실제 PIE 통합이 완료됐다.
+- Seed/Scenario/Run Context 전달, 새 Run ID, World 상태 reset, LLM active/pending request 전환 안전성을 확인했다.
+- 남은 항목은 사용자 주도 Game target build와 등록 map cook/package 열기 검증이다. Live Coding 협업 규칙에 따라 에이전트가 임의로 빌드하지 않는다.
+
 ## 5. Phase 4 — Command Data and Trace
 
 ### 신규 파일
@@ -161,6 +239,7 @@ All transitions
 | `Source/Retry/AI/CommandValidation.h/.cpp` | 허용 verb-target 조합, ID, 대상, priority, constraint 모순 검증과 구조화 결과 코드 |
 | `Source/Retry/Scenario/ScenarioExecutionLogSubsystem.h/.cpp` | Run/Command/Event ID가 포함된 구조화 이벤트 기록과 Run별 reset/export 경계 |
 | `Source/Retry/Tests/CommandValidationTests.cpp` | 유효/무효 조합 및 상태 전이 테스트 |
+| `Source/Retry/Tests/ScenarioExecutionLogTests.cpp` | ID 연결, stale Run 거부, 완료 Run 보존 테스트 |
 
 ### 수정 파일
 
@@ -182,25 +261,130 @@ Proposed → Validated → Assigned → Executing → Completed
 - terminal 상태에서 재적용하지 않는다.
 - 모든 전이는 Run ID, Command ID, Group ID, Event ID와 실패 이유를 기록한다.
 - `ParentCommandId`가 없는 최상위 명령은 invalid GUID를 명시적으로 허용한다.
+- 사용자 결정에 따라 `Proposed`, `Validated`, `Assigned`, `Executing`의 모든 비종료 상태에서 `Cancelled`로 전이할 수 있다.
+- validation 거부는 실행 중 실패가 아니므로 `Failed`로 바꾸지 않고 `Proposed`와 구조화 오류를 유지한다.
+
+### Phase 4 Unit 1 구현 상태
+
+상태: **Integrated Complete**
+
+- `CommandTypes.h/.cpp`에 Command/Mission 공용 enum과 value struct를 추가했다.
+- `ENPCOrder`는 순간 전투 성향, `ECommandVerb`는 상위 작전 목표로 분리했다.
+- `LLMTypes.h`는 transport DTO로 유지하고 수정하지 않았다.
+- Constraint/Requirement는 Phase 5의 marker/Blackboard 결정을 선행하지 않도록 semantic `FName` ID를 사용한다.
+- 상태 전이는 순방향, 실행 중 Completed/Failed, 모든 비종료 상태의 Cancelled만 허용한다.
+- `Retry.Command.Status` 자동화 테스트 3개로 정상 전이, 취소, 역전이/terminal 거부를 검증한다.
+- 사용자가 `Retry.Command.Status` 자동화 테스트 3개의 통과를 확인했다.
+
+### Phase 4 Unit 2 구현 상태
+
+상태: **Integrated Complete**
+
+- `FCommandValidator`는 Command를 수정하지 않고 모든 validation issue를 수집해 반환한다.
+- 허용 조합은 `Recon+Area/Route`, `Secure+Area`, `Defend+Position`, `Block+Route`다.
+- Command/Issuer/Group/Target ID, Priority, 초기 Status, Position 유한 좌표를 검사한다.
+- Constraint ID/수치, Requirement ID/Subject, 완료 조건 ID와 Hold/Timeout 모순을 검사한다.
+- 최상위 Command의 invalid `ParentCommandId`와 World 원점 Position은 허용한다.
+- Validation 성공 후 `Validated` 상태 전이는 호출자가 별도로 수행한다.
+- `Retry.Command.Validation` 자동화 테스트 4개로 허용/거부 조합, 오류 수집, nested data를 검증한다.
+- 사용자가 `Retry.Command.Validation` 자동화 테스트 4개의 통과를 확인했다.
+
+### Phase 4 Unit 3 구현 상태
+
+상태: **Integrated Complete**
+
+- `UScenarioExecutionLogSubsystem`은 `UGameInstanceSubsystem`으로서 레벨 전환을 넘어 현재 세션의 Run 로그를 메모리에 보존한다.
+- Run 시작·종료와 Command validation·상태 전이를 문자열 한 줄이 아닌 구조화 이벤트로 기록한다.
+- 각 이벤트는 Run ID, Command ID, Event ID, Run 내부 순번과 UTC 시각을 가져 원인 흐름을 연결할 수 있다.
+- 현재 Run ID와 다른 늦은 기록은 거부하여 이전 World의 callback이 새 Run 로그를 오염시키지 못하게 한다.
+- Restart는 이전 Run을 `Restarted`로 닫고 새 Run을 시작하며, Return은 `ReturnedToMenu`로 닫는다. 완료 Run은 세션 메모리에 남는다.
+- 상태 변경 이벤트는 전용 API에서 유효한 상태 전이와 이전/새 상태를 함께 검사·기록한다.
+- 파일 저장·JSON export와 보존 개수 정책은 실제 소비 경로가 결정되는 후속 단위로 미룬다.
+- `Retry.Scenario.ExecutionLog` 자동화 테스트 3개로 ID 연결, stale write 거부, 완료 Run 보존을 검증한다.
+- 테스트 fixture의 Subsystem Outer를 임시 `UGameInstance`로 수정한 뒤 사용자가 3개 테스트의 통과와 `ClassWithin GameInstance` ensure 제거를 확인했다.
+
+### Phase 4 Unit 4 구현 상태
+
+상태: **Integrated Complete**
+
+- `AGroupManagerActor`가 해당 그룹의 현재 `FCommandIntent`를 World 수명 동안 권위 상태로 소유한다.
+- `AssignCommand`는 활성 Scenario/Execution Log 확인, 기존 활성 Command 보호, 구조 validation, Group ID 일치 검사를 한 진입점에서 수행한다.
+- 유효한 Command만 `Proposed → Validated → Assigned`로 전이하고 각 단계와 validation 성공을 Run 로그에 기록한다.
+- 거부 결과는 `ECommandAssignmentOutcome`, validation issues, 메시지를 함께 반환하며 GroupManager의 소유 상태를 바꾸지 않는다.
+- 비종료 Command는 새 Command로 덮어쓰거나 직접 Clear할 수 없다. `Cancelled` 등 terminal 상태로 전이한 뒤에만 Clear할 수 있다.
+- Phase 5는 같은 상태 전이 API로 `Assigned → Executing → Completed/Failed`를 진행한다.
+- 기존 LLM 감정 반응의 `SetOrderForAll`과 `ENPCOrder` 경로는 수정하지 않았다.
+- `Retry.Command.GroupAuthority` 자동화 테스트 3개로 정상 할당/로그, validation·Group mismatch 거부, 활성 Command 교체 방지와 Cancel/Clear 수명을 검증한다.
+- 사용자가 `Retry.Command.GroupAuthority` 자동화 테스트 3개의 통과를 확인했다.
+
+### Phase 4 완료 상태
+
+상태: **Feature Integrated Complete**
+
+- Command 데이터 계약과 상태 머신, 구조 validation, Run별 실행 로그, GroupManager 권위 수명이 연결됐다.
+- 자동화 테스트 13개(`Status` 3, `Validation` 4, `ExecutionLog` 3, `GroupAuthority` 3)의 사용자 통과를 확인했다.
+- 기존 `ENPCOrder`와 `SetOrderForAll` 실행 경로는 유지되며, 실제 Mission 실행과 Blackboard 연결은 Phase 5에서 시작한다.
 
 ### Phase 4 테스트
 
 - `Recon+Area`, `Recon+Route`, `Secure+Area`, `Defend+Position`, `Block+Route`만 초기 허용.
 - 잘못된 group/target/priority/constraint 거부.
 - terminal 상태 이중 완료와 잘못된 역전이 거부.
+- GroupManager가 다른 Group의 Command와 활성 Command 덮어쓰기를 거부하는지 확인.
 - 기존 `SetOrderForAll` 직접 호출 동작이 유지되는지 회귀 확인.
 - C++ 빌드만으로 `Code Complete`; 이 단계의 기본 에디터 작업은 없음.
 
 ## 6. Phase 5 — ReconArea Vertical Slice
+
+### Phase 5 Unit 0 Preflight
+
+상태: **Complete / Marker Architecture Decided**
+
+- `BB_NPC`는 전투용 `TargetActor`, `CoverLocation`, `LastKnownEnemyLocation` 등 11개 key만 가진 의도적인 최소 schema다.
+- `BT_LowIntelNPC`는 root Selector 아래 CombatState branch 구조이며 모든 state decorator의 `FlowAbortMode=None`이 확인돼 있다.
+- 기존 `UBTTask_MoveToTarget`은 이동 요청 직후 `Succeeded`를 반환하고, `UBTTask_MoveToCover`는 이동 중 `InProgress`를 반환하지만 완료 callback이 없다.
+- Recon 이동은 기존 커스텀 Task를 억지로 재사용하지 않고 native `Move To`를 사용하는 별도 Mission branch로 계획한다.
+- Mission 목적지는 전투 `TargetActor`, `LastKnownEnemyLocation`, `CoverLocation`에 덮어쓰지 않고 전용 Blackboard key를 사용한다.
+- 첫 수직 슬라이스는 `Recon + Area`가 소비하는 Objective Area와 Observation Point만 구현한다. Route marker는 실제 소비자인 Secure/Block 단위까지 미룬다.
+- 현재 Scenario Level에는 기존 Group/NPC/Patrol/NavMesh 배치가 있지만 Objective/Observation 전용 marker는 아직 없다.
+- 사용자 결정으로 공통 `AScenarioMarkerActor` 기반과 전문 Objective/Observation Actor를 사용한다. 배치 Actor와 미래 EQS 값 후보를 Selector 입력에서 합칠 수 있도록 동적 후보 생성 방식은 고정하지 않는다.
+
+### Phase 5 Unit 1 구현 상태
+
+상태: **Integrated Complete**
+
+- `AScenarioMarkerActor`는 공통 semantic `MarkerId`와 marker set 검증 경계를 제공한다.
+- `AObjectiveAreaActor`는 지역 중심과 양수 `AreaRadius`를 가지며 충돌 없는 Sphere로 에디터 범위를 표시한다.
+- `AObservationPointActor`는 자신의 Marker ID와 연결할 `ObjectiveId`를 가지며 Arrow로 관측 방향을 표시한다.
+- 전 marker 타입의 ID는 하나의 namespace에서 중복될 수 없고 Observation은 실제 Objective ID를 참조해야 한다.
+- 기존 `AScenarioInitializer::ValidateScenarioSetup()`이 배치된 marker가 있을 때 같은 검증을 수행한다. marker가 없는 기존 level은 회귀 없이 유지된다.
+- `Retry.Scenario.Markers` 자동화 테스트 3개로 정상 연결, ID 중복, 잘못된 반경과 존재하지 않는 Objective 참조를 검증한다.
+- Route marker와 동적 EQS 후보 생성은 실제 소비 단위까지 미룬다.
+- 사용자가 자동화 테스트 3개, Objective 1개와 Observation 2개 배치, 의도적 잘못된 Objective 연결 거부, 복원 후 최종 Scenario validation 성공을 확인했다.
+
+### Phase 5 Unit 2 구현 상태 — Mission Overlay와 Blackboard 실행 투영
+
+상태: **Integrated Complete**
+
+- `UNPCDecisionComponent`가 optional `FMissionContext`의 권위 원본을 소유하고 설정, 조회, 해제한다.
+- 유효한 Command ID, Objective ID, 유한한 Objective Location을 가진 context만 수락한다.
+- 기존 Decision Service가 호출하는 `WriteBlackboard()`에서 실행에 필요한 값만 Blackboard로 투영한다.
+- 활성 임무가 있고 CombatState가 `Idle` 또는 `Patrol`일 때만 `bMissionMovementAllowed=true`다. Alert 이상의 전투 상태와 Hold, Dead는 임무 이동을 중단한다.
+- 활성 임무가 없으면 `MissionTargetLocation`을 지우고 이동 허용을 false로 기록한다.
+- AIController가 Pawn을 놓는 `OnUnPossess()`에서 context를 해제하여 재사용되는 controller에 이전 임무가 남지 않게 한다.
+- `Retry.Mission.Overlay` 자동화 테스트 3개가 수락/해제, 잘못된 context 거부, 전투 상태별 이동 허용 규칙을 검증한다.
+- 이 단위는 Mission Resolver나 Group dispatch를 아직 만들지 않는다. 실제 PIE 이동은 후속 단위에서 임무를 배정한 뒤 검증한다.
+- 사용자가 Blackboard key 2개와 Alert/Patrol 사이 Mission Sequence, `Observer Aborts=Self`, native `Move To` 배선을 완료하고 자동화 테스트 3개의 통과를 확인했다.
 
 ### 신규 파일
 
 | 파일 | 타입/책임 |
 |---|---|
 | `Source/Retry/AI/MissionResolver.h/.cpp` | `FCommandIntent`를 target, hard constraint, weight modifier, completion data가 있는 `FMissionContext`로 변환 |
-| `Source/Retry/AI/ScenarioMarkerTypes.h` | Area/Route/Observation의 안정적 ID와 공통 검증 타입 |
+| `Source/Retry/AI/ScenarioMarkerTypes.h` | Marker 구조화 validation 오류와 결과 타입 |
+| `Source/Retry/AI/ScenarioMarkerActor.h/.cpp` | 공통 semantic Marker ID와 marker set 검증 기반 |
 | `Source/Retry/AI/ObjectiveAreaActor.h/.cpp` | 레벨 배치 목표 영역과 Objective ID/점유 질의 |
-| `Source/Retry/AI/RouteMarkerActor.h/.cpp` | Route ID, 경로 상태, 관련 marker 참조 |
+| `Source/Retry/AI/RouteMarkerActor.h/.cpp` | Secure/Block에서 실제 소비할 때 추가하도록 연기 |
 | `Source/Retry/AI/ObservationPointActor.h/.cpp` | Observation ID, 가시성/위험/통신/비용 입력 |
 | `Source/Retry/AI/ObservationPointSelector.h/.cpp` | Nav 접근성·거리·노출·가시성 기반 후보 점수 계산 |
 | `Source/Retry/AI/OperationalTypes.h` | Fact/Report/predicate/status와 source/run/command ID 구조 |
@@ -222,7 +406,9 @@ Proposed → Validated → Assigned → Executing → Completed
 ### Blackboard 원칙
 
 - 판단 결과는 `UNPCDecisionComponent`와 `FMissionContext`가 권위 상태다.
-- BT가 실행에 필요한 최소값만 쓴다. 예상 후보는 `MissionTargetActor`, `MissionTargetLocation`, `bMissionMovementAllowed`이나, 정확한 key와 타입은 Phase 5 시작 시 Editor asset을 재검증하고 사용자에게 확인받은 뒤 확정한다.
+- BT가 실행에 필요한 최소값만 쓴다. 사용자 결정으로 `MissionTargetLocation`은 Vector, `bMissionMovementAllowed`는 Bool로 확정했다. 첫 수직 슬라이스에는 별도 Mission Target Actor key를 만들지 않는다.
+- `BT_LowIntelNPC`의 Mission Sequence는 Alert branch 다음, Patrol branch 앞에 둔다. `bMissionMovementAllowed == true` Blackboard decorator와 native `Move To(MissionTargetLocation)`를 사용한다.
+- Mission decorator의 `Observer Aborts`는 `Self`로 설정하여 전투 상태가 임무 이동을 금지하면 현재 Mission branch만 즉시 중단한다. 기존 CombatState decorator의 abort 설정은 이 단위에서 변경하지 않는다.
 - `TargetActor`, `LastKnownEnemyLocation`, `CoverLocation`에 임무 목적을 억지로 덮어써 전투 의미를 오염시키지 않는다.
 - mission 이동 후 긴급 `Dead`, `Reload`, visible threat 대응은 기존 우선순위를 유지한다.
 
@@ -324,6 +510,22 @@ Phase 5와 6이 하드코딩 명령으로 Integrated Complete가 된 뒤에만 �
 
 Phase 3은 추가로 Game target 및 등록 map cook/package 검증을 완료 게이트에 포함한다.
 
+### Live Coding 협업 규칙
+
+- Unreal Editor가 열린 상태에서는 에이전트가 `Build.bat`, UnrealBuildTool, IDE Build를 실행하지 않는다.
+- 에이전트는 C++ 수정 후 변경 범위 검토, 검색 기반 정적 확인, `git diff --check`까지만 수행한다.
+- 열린 에디터에 변경 코드를 반영하는 컴파일은 사용자가 Live Coding으로 수행한다.
+- 전체 `RetryEditor` 또는 Game target 빌드는 사용자가 명시적으로 요청하고, Unreal Editor가 닫혔거나 Live Coding을 사용하지 않을 상태라고 확인한 경우에만 실행한다.
+- UHT 반영이 필요한 `UCLASS`, `USTRUCT`, `UENUM`, `UPROPERTY`, `UFUNCTION` 형태 변경처럼 Live Coding으로 안전하게 반영되지 않을 수 있는 수정은 사전에 알리되, 에이전트가 임의로 전체 빌드하거나 에디터를 종료하지 않는다.
+- 완료 보고에서 `소스 수정 완료`, `정적 확인 완료`, `사용자 Live Coding 확인 필요`, `전체 빌드 완료`를 구분한다.
+
+### 에디터 관리 Project Settings 협업 규칙
+
+- Collision Channel, Default Map 등 Unreal Editor의 Project Settings UI에서 관리하는 설정은 에이전트가 `DefaultEngine.ini`를 직접 수정하지 않는다.
+- 에이전트는 설정의 목적, 정확한 에디터 경로, 입력할 값, 예상 결과와 검증 절차를 사용자에게 안내한다.
+- 에디터가 저장한 ini 변경은 결과물로 받아들이되, 에이전트가 텍스트를 대신 작성하는 것은 사용자가 명시적으로 요청한 경우에만 수행한다.
+- C++에서 custom collision channel 번호를 사용할 때는 사용자가 에디터에서 생성한 실제 `GameTraceChannel` 번호를 먼저 확인하고 일치시킨다.
+
 ## 11. 롤백 전략
 
 - 새 기능은 `Scenario`, `Command`, `MissionContext`가 없으면 기존 AI 경로가 그대로 실행되도록 optional하게 추가한다.
@@ -351,12 +553,11 @@ Phase 3은 추가로 Game target 및 등록 map cook/package 검증을 완료 �
 
 아래 항목은 현재 Phase 2 아키텍처나 Phase 3 구현을 막지 않으므로 해당 Phase 시작 직전에 결정한다. Codex는 임의로 확정하지 않고 사용자에게 질문한다.
 
-1. **Phase 3 UI 세부 구성**: `WBP_ScenarioSelect`의 표시 방식, 인게임 디버그 메뉴 입력 키와 배치.
-2. **Phase 5 Blackboard schema**: mission 전용 key의 정확한 이름/타입과 BT branch/Observer Abort 정책.
-3. **Report 전송 모델**: 첫 스파이크에서 즉시 수신, 고정 지연, 통신 actor/component 중 어느 수준까지 구현할지.
-4. **Recon/Secure 수치 기준**: 제한 시간, 전투력 실패 임계치, 점유 유지 시간, observation utility 가중치.
-5. **레벨 marker 세분화**: Objective/Route/Observation을 각각 Actor로 둘지 공통 base actor/component를 둘지 Phase 5 실제 레벨 구성 확인 후 확정.
-6. **로그 export 형식과 위치**: JSON Lines, 단일 JSON, CSV 중 선택 및 저장 경로.
+1. **Phase 5 Blackboard schema**: mission 전용 key의 정확한 이름/타입과 BT branch/Observer Abort 정책.
+2. **Report 전송 모델**: 첫 스파이크에서 즉시 수신, 고정 지연, 통신 actor/component 중 어느 수준까지 구현할지.
+3. **Recon/Secure 수치 기준**: 제한 시간, 전투력 실패 임계치, 점유 유지 시간, observation utility 가중치.
+4. **레벨 marker 세분화**: Objective/Route/Observation을 각각 Actor로 둘지 공통 base actor/component를 둘지 Phase 5 실제 레벨 구성 확인 후 확정.
+5. **로그 export 형식과 위치**: JSON Lines, 단일 JSON, CSV 중 선택 및 저장 경로.
 7. **Editor Startup Map 변경 여부**: Game Default Map은 메뉴로 변경하되 에디터 시작도 메뉴로 바꿀지는 통합 시 확인.
 
 ## 14. Phase 2 완료 체크리스트

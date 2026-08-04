@@ -56,6 +56,10 @@ void ARetryNPCController::OnUnPossess()
 {
     PerceptionComponent->OnTargetPerceptionUpdated.RemoveAll(this);
     LastPerceivedActor = nullptr;
+	if (DecisionComponent)
+	{
+		DecisionComponent->ClearMissionContext();
+	}
 
     Super::OnUnPossess();
 }

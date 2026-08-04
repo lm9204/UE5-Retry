@@ -11,6 +11,7 @@ AProjectileActor::AProjectileActor()
 	CollisionComponent = CreateDefaultSubobject<USphereComponent>(TEXT("CollisionComponent"));
 	CollisionComponent->SetSphereRadius(5.f);
 	CollisionComponent->SetCollisionProfileName(TEXT("BlockAllDynamic"));
+	CollisionComponent->SetCollisionObjectType(ECC_GameTraceChannel2); // Projectile
 	RootComponent = CollisionComponent;
 
 	MeshComponent = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("MeshComponent"));
@@ -29,6 +30,9 @@ AProjectileActor::AProjectileActor()
 void AProjectileActor::BeginPlay()
 {
 	Super::BeginPlay();
+
+	// Existing Blueprint projectile defaults may retain the old WorldDynamic type.
+	CollisionComponent->SetCollisionObjectType(ECC_GameTraceChannel2); // Projectile
 
 	CollisionComponent->OnComponentHit.AddDynamic(this, &AProjectileActor::onHit);
 

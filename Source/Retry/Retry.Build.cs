@@ -23,6 +23,7 @@ public class Retry : ModuleRules
 			"HTTP",
 			"Json",
 			"JsonUtilities",
+			"DeveloperSettings",
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[] { });
