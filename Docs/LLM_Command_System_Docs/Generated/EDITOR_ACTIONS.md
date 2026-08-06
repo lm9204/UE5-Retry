@@ -1,5 +1,13 @@
 # Unreal Editor Integration Actions
 
+## 기능 배치 검증 방식 — 2026-08-05 이후
+
+- Codex는 기능 배치의 C++와 유닛 단위 자동화 테스트를 모두 작성한 뒤 한 번에 사용자 검증을 요청한다.
+- 사용자는 각 유닛마다 Live Coding하지 않고 기능 체크포인트에서 한 번만 코드를 반영한다.
+- Codex는 체크포인트마다 실행할 자동화 테스트 이름을 순서대로 한 목록으로 제공한다.
+- 자동화가 모두 통과한 뒤에만 DataAsset/Blueprint/Level 연결과 PIE 실제 동작 검증을 진행한다.
+- 아래 과거 Unit별 절차는 당시 진행 기록으로 유지하며, 이후 작업에는 기능 배치 방식을 우선 적용한다.
+
 ## Phase 3 Unit 1 — Scenario Definition DataAsset
 
 ### Codex가 구현한 것
@@ -674,6 +682,387 @@ Automation RunTests Retry.Mission.Overlay
 - [x] Mission Sequence/decorator/native Move To 배선
 
 Unit 2는 **Integrated Complete** 상태다.
+
+---
+
+## Phase 5 Unit 3 — Observation Point Selector
+
+### Codex가 구현한 것
+
+- 배치 Actor와 미래 동적 후보가 공유할 `FObservationPointCandidate`
+- Objective 연결과 도달 가능성을 hard constraint로 적용하는 순수 선택 규칙
+- 최고 utility score 선택과 Point ID 기반 결정적 동점 처리
+- 잘못된 Objective, 연결 후보 없음, 사용 가능한 후보 없음의 구조화 결과
+- 자동화 테스트 3개
+
+이 단위는 Blackboard, Behavior Tree, Level Asset을 수정하지 않는다. 새 reflection 타입도 없으며 Codex는 빌드를 실행하지 않았다.
+
+### 사용자 검증
+
+Live Coding으로 코드를 반영한 뒤 Output Log에서 실행한다.
+
+```text
+Automation RunTests Retry.Mission.ObservationSelector
+```
+
+기대 테스트:
+
+- `Retry.Mission.ObservationSelector.ChoosesHighestUsableScore`
+- `Retry.Mission.ObservationSelector.UsesStableIdTieBreak`
+- `Retry.Mission.ObservationSelector.ReportsFailureReasons`
+
+이번 테스트는 레벨의 `ReconObs_A1/A2`를 직접 읽지 않는다. 순수 규칙이므로 테스트 값 후보로 선택 동작을 검증한다. 실제 배치 Actor 수집과 NavMesh 도달 가능성 판정은 다음 Resolver 연결 단위에서 수행한다.
+
+### 현재 통합 상태
+
+- [x] 후보/결과 타입 작성
+- [x] hard constraint와 utility 선택 규칙 작성
+- [x] 결정적 동점 규칙 작성
+- [x] 자동화 테스트 3개 작성
+- [x] 변경 파일 정적 검사
+- [x] 사용자 코드 반영
+- [x] Observation Selector 테스트 3개 통과
+
+Unit 3는 **Integrated Complete** 상태다.
+
+---
+
+## Phase 5 Unit 4 — Mission Resolver
+
+### Codex가 구현한 것
+
+- Assigned `Recon + Area` Command의 경계 검증
+- Command 목표와 찾아온 Objective ID 일치 확인
+- Observation Selector 결과를 `FMissionContext`로 변환
+- Command ID, hard/soft constraint, Information Requirement 보존
+- Selector의 상세 실패 outcome 전달
+- Mission Resolver 자동화 테스트 3개
+
+이 단위는 새 reflection 타입, Blackboard key, Behavior Tree node, Level Asset을 추가하지 않는다. Codex는 빌드를 실행하지 않았다.
+
+### 사용자 검증
+
+Live Coding으로 반영한 뒤 Output Log에서 실행한다.
+
+```text
+Automation RunTests Retry.Mission.Resolver
+```
+
+기대 테스트:
+
+- `Retry.Mission.Resolver.BuildsReconMissionContext`
+- `Retry.Mission.Resolver.RejectsWrongBoundaryInputs`
+- `Retry.Mission.Resolver.PreservesSelectionFailure`
+
+이번 테스트도 World와 Editor Asset을 열지 않는 순수 규칙 테스트다. 따라서 별도 에디터 작업은 없다.
+
+### 현재 통합 상태
+
+- [x] Resolver 결과와 실패 경계 작성
+- [x] Assigned Recon Area 변환 작성
+- [x] constraint/requirement 전달 작성
+- [x] 자동화 테스트 3개 작성
+- [x] 변경 파일 정적 검사
+- [x] 사용자 코드 반영
+- [x] Mission Resolver 테스트 3개 통과
+
+Unit 4는 **Integrated Complete** 상태다.
+
+---
+
+## Phase 5 Unit 5 — Recon Mission World Adapter
+
+### Codex가 구현한 것
+
+- World의 Objective/Observation Marker 수집
+- Objective 없음과 ID 중복의 구조화 실패
+- UE Navigation의 valid non-partial path 판정
+- 최단 Nav 경로 기반 baseline utility
+- World marker 수집을 NavMesh 없이 검증할 path evaluator 경계
+- World Adapter 자동화 테스트 3개
+
+이 단위는 새 reflection 타입, Blackboard key, Behavior Tree node, Level Asset을 추가하지 않는다. Codex는 빌드를 실행하지 않았다.
+
+### 사용자 검증
+
+Live Coding으로 반영한 뒤 Output Log에서 실행한다.
+
+```text
+Automation RunTests Retry.Mission.WorldAdapter
+```
+
+기대 테스트:
+
+- `Retry.Mission.WorldAdapter.SelectsShortestReachablePath`
+- `Retry.Mission.WorldAdapter.ReportsObjectiveFailures`
+- `Retry.Mission.WorldAdapter.PreservesNoReachableCandidate`
+
+테스트는 Editor Preview World의 Marker와 주입된 path evaluator를 사용한다. 실제 `Lvl_TS_ReconSecure_001` NavMesh query는 다음 Group dispatch 단위에서 Mission Context를 배포한 뒤 PIE로 검증한다. 이번 단위에는 별도 에디터 Asset 작업이 없다.
+
+### 미래 베이크 확장 기록
+
+- 정적인 엄폐·가시성·고도·노출 데이터는 하나의 점수가 아닌 feature 채널로 Tactical Point/Grid Asset에 Editor bake 가능
+- 런타임에는 작전 교리와 현재 Group Leader 성격을 feature 가중치로 적용하고 Nav path와 현재 위협을 동적으로 합성
+- 현재 Selector/Resolver/Blackboard는 최종 Candidate 값을 소비하므로 구조 유지 가능
+- Cell 크기, 방향 수, World Partition streaming 정책을 결정한 뒤 실제 Asset 타입 추가
+
+지휘 우선순위는 `Hard Constraint > Command/Doctrine > Leader Personality > Point ID Tie-break`로 유지한다. Group Mission의 Observation Point는 Leader 성격으로 한 번 선택하고, 일반 Member 성격은 이후 개인 전투 판단에 사용한다.
+
+### 현재 통합 상태
+
+- [x] World marker 수집 작성
+- [x] Objective 없음/중복 경계 작성
+- [x] production Nav path 판정 작성
+- [x] 최단 경로 baseline utility 작성
+- [x] 자동화 테스트 3개 작성
+- [x] 변경 파일 정적 검사
+- [x] 사용자 코드 반영
+- [x] World Adapter 테스트 3개 통과
+
+Unit 5는 **Integrated Complete** 상태다.
+
+---
+
+## Phase 5 Unit 6 — Atomic Group Mission Dispatch
+
+### Codex가 구현한 것
+
+- Group Leader 위치와 Actor를 World Adapter의 Nav 시작점/context로 사용
+- 죽은 Member는 제외하되 살아 있는 등록 Member 전원의 Controller와 `NPCDecisionComponent` 사전 검사
+- 모든 수신자의 기존 Mission snapshot 저장 후 동일한 `FMissionContext` 원자적 배포
+- Mission 거부 또는 Execution Log/status 전이 실패 시 모든 수신자의 이전 상태 복원
+- 전원 배포 성공 후에만 Command를 `Assigned → Executing`으로 전이
+- 성공한 수신자를 weak reference로 보관해 terminal 전이 때 정확한 Mission 대상 정리
+- terminal Command, Scenario reset, Leader death에서 Group Mission 정리
+- `ARetryNPCCharacter::OnDeath()`에서 실제 Leader death 경로 연결
+- Group Mission Dispatch 자동화 테스트 3개
+
+`DispatchCurrentReconMission()`이 새 `UFUNCTION`으로 추가됐다. Live Coding에서 함수가 Blueprint에 보이지 않으면 Editor를 닫고 사용자가 전체 빌드·재시작해야 한다. Codex는 빌드를 실행하지 않았다.
+
+### 사용자 검증
+
+코드를 반영한 뒤 Output Log에서 실행한다.
+
+```text
+Automation RunTests Retry.Mission.GroupDispatch
+```
+
+기대 테스트:
+
+- `Retry.Mission.GroupDispatch.AppliesToAllBeforeExecuting`
+- `Retry.Mission.GroupDispatch.RestoresWhenTransitionFails`
+- `Retry.Mission.GroupDispatch.RejectsUnavailableRecipient`
+
+첫 테스트는 두 수신자에게 Mission이 모두 들어간 뒤 Command가 `Executing`이 되는지 확인한다. 두 번째는 stale Run 때문에 마지막 상태 전이가 실패했을 때 기존 Mission/빈 상태가 각각 복구되는지 확인한다. 세 번째는 수신자 하나가 unavailable이면 정상 수신자도 전혀 변경하지 않는지 확인한다.
+
+실제 `Lvl_TS_ReconSecure_001` NavMesh 이동은 다음 hardcoded Command 시작 경계를 연결한 뒤 PIE에서 검증한다. 이번 단위에는 Blueprint 또는 Level Asset 수정이 없다.
+
+### 현재 통합 상태
+
+- [x] Leader 기준 World resolution 작성
+- [x] 생존 Member 전원 사전 검사 작성
+- [x] Mission snapshot/rollback 작성
+- [x] 성공 후 Executing 전이 작성
+- [x] terminal/reset/Leader death 정리 작성
+- [x] 자동화 테스트 3개 작성
+- [x] 변경 파일 정적 검사
+- [x] 사용자 코드 반영
+- [x] Group Mission Dispatch 테스트 3개 통과
+
+Unit 6는 **Integrated Complete** 상태다.
+
+---
+
+## Phase 5 Unit 7 — Scenario Opening Orders와 첫 End-to-End PIE
+
+### Codex가 구현한 것
+
+- `UScenarioDefinition::OpeningOrders` 명령 템플릿 배열
+- 템플릿마다 새 runtime `CommandId`를 만들고 `Proposed` 상태로 시작하는 builder
+- 기존 `FCommandValidator`를 재사용한 DataAsset 명령 validation
+- 한 Group에 두 개의 동시 Opening Order가 들어가는 구성 거부
+- Scenario 초기화 다음 tick에 Group 등록과 AI Possess를 기다린 뒤 명령 할당·원자적 Mission 배포
+- Run/Definition이 바뀐 늦은 callback 거부와 UObject-bound timer delegate
+- 실제로 선택된 Observation ID, 위치, 후보 수를 보여주는 로그
+- Opening Order 자동화 테스트 3개
+
+이 단위는 새 `UPROPERTY`를 추가한다. Live Coding에서 `Opening Orders`가 DataAsset Details에 나타나지 않으면 Editor를 닫고 사용자가 전체 빌드·재시작해야 한다. Codex는 빌드를 실행하지 않았다.
+
+### 1. 자동화 테스트
+
+Output Log에서 실행한다.
+
+```text
+Automation RunTests Retry.Scenario.OpeningOrders
+```
+
+기대 테스트:
+
+- `Retry.Scenario.OpeningOrders.CreatesRuntimeIdentity`
+- `Retry.Scenario.OpeningOrders.RejectsInvalidTemplate`
+- `Retry.Scenario.OpeningOrders.RejectsDuplicateGroup`
+
+### 2. ScenarioDefinition에 최초 HQ 명령 입력
+
+`/Game/Scenarios/Definitions/DA_TS_ReconSecure_001`을 열고 `Opening Orders`에 element 하나를 추가한다.
+
+- `Command Id`: 비워 둔다. Run 시작 때 자동 생성된다.
+- `Parent Command Id`: 비워 둔다.
+- `Issuer Id`: `HQ`
+- `Assigned Group Id`: `A`
+- `Verb`: `Recon`
+- `Target Type`: `Area`
+- `Target Id`: `ReconArea_A`
+- `Target Location`: 기본값 유지
+- `Priority`: `50`
+- `Constraints`: 비움
+- `Information Requirements`: 이번 이동 검증에서는 비움
+- `Completion Criteria`: 기본값 유지
+- `Status`: `Proposed`
+
+DataAsset을 저장한다. `Default Launch Options > Auto Start`는 `true`를 유지한다.
+
+### 3. 첫 End-to-End PIE 검증
+
+1. `Lvl_TS_ReconSecure_001`에서 `Validate Scenario Setup`이 성공하는지 확인한다.
+2. `Lvl_ScenarioMenu`를 열고 PIE를 시작한다.
+3. `DA_TS_ReconSecure_001`을 선택해 Start한다.
+4. Level 전환 후 다음 로그를 확인한다.
+
+```text
+[Scenario] Level initialized ... AutoStart:true
+[Group:A] Recon Mission resolved. Observation:ReconObs_A1 또는 ReconObs_A2 ... Candidates:2
+[Scenario] Opening Order executing. Group:A Command:<새 GUID> Recipients:2
+```
+
+5. Group A의 두 NPC가 선택된 같은 Observation Point 방향으로 이동하는지 확인한다.
+6. 최단 **Nav 경로**가 더 짧은 Point가 선택되는지 확인한다. 직선거리만 비교하지 않는다.
+7. 이동 중 적을 만나 전투 상태가 되면 Mission 이동이 잠시 중단되고, 전투가 끝나 `Idle/Patrol`로 돌아왔을 때 다시 이동하는지 확인한다.
+8. Group B는 Opening Order를 받지 않고 기존 전투/Patrol 판단을 유지하는지 확인한다.
+9. Restart하면 새 Run ID와 새 Command ID로 같은 흐름이 다시 시작되는지 확인한다.
+10. Return to Menu가 정상이며 PIE 종료 중 timer/callback 오류가 없는지 확인한다.
+
+### 현재 통합 상태
+
+- [x] Opening Order template/builder 작성
+- [x] validation과 Group 중복 경계 작성
+- [x] 다음 tick Scenario 시작 연결 작성
+- [x] 자동화 테스트 3개 작성
+- [x] 변경 파일 정적 검사
+- [x] 사용자 코드 반영
+- [x] `DA_TS_ReconSecure_001` Opening Order 입력·저장
+- [ ] Opening Order 테스트 3개 통과
+- [x] Scenario validation과 Opening Order 실행 로그 확인
+- [x] 실제 NavMesh 선택과 Group A Mission 이동 PIE 확인
+- [ ] Restart/Return 수명 회귀 확인
+
+Unit 7은 **Runtime Movement Verified / Feature Batch Verification Pending** 상태다. Opening Order 자동화 테스트와 Restart/Return 확인은 다음 Phase 5 기능 체크포인트의 일괄 검증 목록에 포함한다.
+
+---
+
+## Phase 5 기능 체크포인트 — Recon Observe → Report → Complete
+
+상태: **Code Complete / User Batch Verification Pending**
+
+이 체크포인트에서만 코드를 한 번 반영하고 아래 테스트를 순서대로 실행한다. 중간 Unit마다 다시 Live Coding하지 않는다. 새 `UENUM`, `USTRUCT`, `UCLASS`, `UPROPERTY`가 있으므로 Live Coding 반영이 불완전하면 Editor를 닫고 사용자가 전체 빌드·재시작한다. Codex는 빌드를 실행하지 않았다.
+
+### 1. 자동화 테스트 전체 목록
+
+아래 순서로 실행한다. 각 묶음이 모두 Success인지 확인한 뒤 다음 묶음으로 간다.
+
+```text
+Automation RunTests Retry.Scenario.OpeningOrders
+Automation RunTests Retry.Operational.Report
+Automation RunTests Retry.Operational.TeamMemory
+Automation RunTests Retry.Command.ExecutionMonitor
+Automation RunTests Retry.Mission.WorldAdapter
+Automation RunTests Retry.Operational.ExecutionLog
+Automation RunTests Retry.Mission.GroupDispatch
+Automation RunTests Retry.Mission.Overlay
+Automation RunTests Retry.Scenario.ExecutionLog
+```
+
+예상 테스트 28개:
+
+1. `Retry.Scenario.OpeningOrders.CreatesRuntimeIdentity`
+2. `Retry.Scenario.OpeningOrders.RejectsInvalidTemplate`
+3. `Retry.Scenario.OpeningOrders.RejectsDuplicateGroup`
+4. `Retry.Operational.Report.BuildsRequiredFacts`
+5. `Retry.Operational.Report.ProvidesImplicitReconFact`
+6. `Retry.Operational.Report.RejectsMismatchedMission`
+7. `Retry.Operational.TeamMemory.GatesFactsOnReceive`
+8. `Retry.Operational.TeamMemory.PartitionsAndDeduplicates`
+9. `Retry.Operational.TeamMemory.ResetsRunState`
+10. `Retry.Command.ExecutionMonitor.UsesHorizontalAndVerticalArrivalTolerances`
+11. `Retry.Command.ExecutionMonitor.RequiresArrivalAndHold`
+12. `Retry.Command.ExecutionMonitor.WaitsDuringCombat`
+13. `Retry.Command.ExecutionMonitor.ReportsFailures`
+14. `Retry.Mission.WorldAdapter.ProjectsMarkerToNavigationHeight`
+15. `Retry.Mission.WorldAdapter.SelectsShortestReachablePath`
+16. `Retry.Mission.WorldAdapter.ReportsObjectiveFailures`
+17. `Retry.Mission.WorldAdapter.PreservesNoReachableCandidate`
+18. `Retry.Operational.ExecutionLog.LinksFactReportAndCommandIds`
+19. `Retry.Operational.ExecutionLog.RejectsStaleRun`
+20. `Retry.Mission.GroupDispatch.AppliesToAllBeforeExecuting`
+21. `Retry.Mission.GroupDispatch.RestoresWhenTransitionFails`
+22. `Retry.Mission.GroupDispatch.RejectsUnavailableRecipient`
+23. `Retry.Mission.Overlay.AcceptsAndClearsValidContext`
+24. `Retry.Mission.Overlay.RejectsInvalidContext`
+25. `Retry.Mission.Overlay.AllowsOnlyIdleAndPatrolMovement`
+26. `Retry.Scenario.ExecutionLog.LinksRunCommandAndEventIds`
+27. `Retry.Scenario.ExecutionLog.RejectsStaleRunWrites`
+28. `Retry.Scenario.ExecutionLog.PreservesCompletedRuns`
+
+### 2. 자동화 통과 후 DataAsset 통합
+
+`DA_TS_ReconSecure_001 > Opening Orders[0]`에 다음을 추가한다.
+
+- `Information Requirements`: element 하나
+  - `Requirement Id`: `AreaObserved`
+  - `Subject Id`: `ReconArea_A`
+  - `Required`: true
+- `Completion Criteria > Minimum Hold Seconds`: `2.0`
+- `Completion Criteria > Timeout Seconds`: `120.0`
+
+`Required Condition Ids`는 이번 Recon 기능에서 사용하지 않으므로 비워 둔다. 저장 후 `Lvl_TS_ReconSecure_001`의 `Validate Scenario Setup`이 성공하는지 확인한다.
+
+### 3. PIE 실제 동작 검증
+
+1. `Lvl_ScenarioMenu`에서 `DA_TS_ReconSecure_001`을 Start한다.
+2. Group A가 선택된 Observation Point로 이동하는 기존 동작을 확인한다.
+3. Leader가 반경 150 안에 들어온 뒤 전투 중이 아니라면 약 2초 후 다음 로그가 순서대로 나타나는지 확인한다.
+
+```text
+[TeamMemory:1] Recon Report received. Report:<GUID> Command:<GUID> Facts:1
+[Group:A] Recon completed. Command:<같은 GUID> Report:<같은 Report GUID> Facts:1
+```
+
+4. 완료 후 Group A의 Mission 이동이 끝나고 기존 Patrol/전투 판단으로 복귀하는지 확인한다.
+5. 관측점 근처에서 전투가 발생하면 전투 중에는 완료되지 않고, 전투가 끝난 뒤 hold를 다시 채워 완료되는지 확인한다.
+6. Restart 후 새 Run ID, Command ID, Fact ID, Report ID로 다시 완료되는지 확인한다.
+7. Return to Menu와 PIE 종료에서 timer, stale Run, WorldSubsystem 오류가 없는지 확인한다.
+8. Group B의 기존 Patrol/전투와 기존 `Lvl_ThirdPerson` 전투가 회귀 없이 동작하는지 확인한다.
+
+### 현재 체크리스트
+
+- [x] Fact/Report 타입과 builder 작성
+- [x] Team Operational Memory Received gate 작성
+- [x] Recon completion/timeout monitor 작성
+- [x] Group runtime observe/report/complete 연결
+- [x] Execution Log Fact/Report ID 연결 작성
+- [x] Scenario reset Team Memory 정리 작성
+- [x] 신규 자동화 테스트 11개 작성
+- [x] 회귀 테스트 12개 일괄 목록 작성
+- [x] 변경 파일 정적 검사
+- [ ] 사용자 코드 반영
+- [x] 기존 자동화 테스트 23개 통과
+- [ ] 도착 판정 회귀 테스트 1개 통과
+- [ ] Nav 높이 투영을 포함한 World Adapter 테스트 4개 통과
+- [ ] DataAsset requirement/hold/timeout 저장
+- [ ] PIE Report Received와 Command Completed 확인
+- [ ] Restart/Return 및 기존 전투 회귀 확인
+
+이 기능 배치는 **Code Complete / User Batch Verification Pending** 상태다.
 
 ---
 

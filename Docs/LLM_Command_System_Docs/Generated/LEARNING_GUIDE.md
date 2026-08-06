@@ -4,6 +4,10 @@
 대상: Unreal Engine과 C++ 구조를 배우면서 이 프로젝트를 직접 만들고 싶은 개발자  
 연결 문서: [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md)
 
+### 2026-08-05 이후 학습·검증 방식
+
+기능 구현은 여러 개념을 묶은 end-to-end 배치로 진행한다. 각 개념의 경계와 작은 자동화 테스트는 유지하지만, 사용자에게 유닛마다 Live Coding과 테스트를 반복하도록 요구하지 않는다. 세부 설명은 이 문서에 누적하고, 사용자는 기능 체크포인트에서 문서를 읽은 뒤 자동화 테스트 목록과 PIE 통합 절차를 한 번에 수행한다.
+
 ## 1. 이 문서가 필요한 이유
 
 `IMPLEMENTATION_PLAN.md`는 무엇을 어느 파일에 구현할지 정확하게 통제하기 위한 기술 문서다. 그래서 이미 `Subsystem`, `DataAsset`, 객체 수명, 상태 전이 같은 개념을 아는 사람에게는 유용하지만 처음 배우는 사람에게는 클래스 이름 목록처럼 보일 수 있다.
@@ -773,6 +777,327 @@ AIController가 Pawn을 놓으면 `OnUnPossess()`가 Mission Context를 지운�
 - **투영(projection)**: 권위 원본에서 소비자가 필요한 일부 값만 계산해 전달하는 것이다.
 - **Observer Aborts Self**: decorator 조건이 실행 중 거짓이 되면 그 decorator가 속한 branch를 중단하는 Behavior Tree 설정이다.
 
+### Phase 5 진행 기록 — Unit 3 Observation Point Selector
+
+상태: **Integrated Complete**
+
+학습 목표는 World에서 후보를 수집하는 일과 후보 중 하나를 결정하는 일을 분리하는 것이다.
+
+`FObservationPointSelector`는 Actor나 UObject가 아니다. 후보 배열을 입력받아 결과값을 반환하는 순수 C++ 규칙이다. 그래서 Level, NavMesh, 현재 선택 상태를 바꾸지 않고 자동화 테스트할 수 있으며, 같은 규칙을 배치 Actor와 미래 EQS 후보 모두에 재사용할 수 있다.
+
+Selector가 받는 후보 값은 다음과 같다.
+
+- `PointId`: 선택 결과를 로그와 Mission Context에 연결할 semantic ID
+- `ObjectiveId`: 어느 목표 지역을 관측하는 후보인지 나타내는 연결
+- `Location`: 선택 후 Blackboard로 전달할 위치
+- `bReachable`: World/NavMesh 조사 단계에서 판정한 hard constraint
+- `UtilityScore`: 거리, 가시성, 노출, 통신 같은 항목을 앞 단계에서 계산해 합친 값
+
+도달 불가능은 점수가 낮은 후보가 아니라 선택할 수 없는 후보다. 따라서 먼저 hard constraint로 제외하고, 남은 후보끼리 utility score를 비교한다. 점수가 같으면 Point ID 순으로 선택하여 배열 순서나 Actor 검색 순서 때문에 결과가 바뀌지 않게 한다. 이 성질을 **결정성(determinism)**이라고 한다.
+
+이번 단위는 거리·가시성 등의 가중치를 임의로 정하지 않는다. 수치가 정해지기 전에는 Selector가 이미 계산된 점수를 소비하도록 두고, 후속 단위에서 실제 Level과 gameplay 요구에 맞는 evaluator를 연결한다.
+
+실패도 하나의 false로 뭉치지 않는다.
+
+- `InvalidObjectiveId`: 요청 자체에 목표 ID가 없음
+- `NoMatchingCandidates`: 그 Objective에 연결된 후보가 없음
+- `NoUsableCandidates`: 연결 후보는 있지만 모두 도달 불가능하거나 데이터가 잘못됨
+
+관련 파일:
+
+- `Source/Retry/AI/ObservationPointSelector.h/.cpp`
+- `Source/Retry/Tests/ObservationPointSelectorTests.cpp`
+
+새 용어:
+
+- **hard constraint**: 만족하지 않으면 점수와 관계없이 후보에서 제외되는 필수 조건이다.
+- **utility score**: 사용 가능한 후보들 사이의 선호도를 비교하는 숫자다.
+- **결정성(determinism)**: 같은 입력이면 실행 순서와 관계없이 같은 결과가 나오는 성질이다.
+
+사용자가 Observation Selector 자동화 테스트 3개의 통과를 확인했다.
+
+### Phase 5 진행 기록 — Unit 4 Mission Resolver
+
+상태: **Integrated Complete**
+
+학습 목표는 상위 Command와 하위 Mission 사이의 번역 경계를 이해하는 것이다.
+
+`FCommandIntent`는 “ReconArea_A를 정찰하라”는 작전 의도다. NPC의 Move To는 “ReconObs_A2 위치로 이동하라”처럼 구체적인 실행 데이터가 필요하다. `FMissionResolver`가 두 표현 사이를 번역한다.
+
+```text
+Assigned FCommandIntent (Recon + Area, ReconArea_A)
+→ Objective ID 일치 확인
+→ Observation Selector 실행
+→ FMissionContext (ReconObs_A2, 실제 위치)
+```
+
+Resolver는 UObject가 아니라 상태 없는 C++ 함수 집합이다. 생성되거나 파괴되는 객체가 아니며 Command와 후보를 입력받은 호출 동안만 계산한다. 비동기 작업, World 참조, 저장할 상태가 없기 때문에 UObject 생명주기를 추가하지 않는 것이 더 단순하다.
+
+`FCommandValidator`를 Resolver에서 다시 호출하지 않는 이유도 중요하다. Validator는 외부에서 들어온 `Proposed` Command를 검사한다. GroupManager가 이를 통과시키면 상태가 `Assigned`가 된다. Resolver가 같은 Validator를 다시 호출하면 정상 Assigned Command를 `InvalidInitialStatus`로 거부하게 된다. 따라서 Resolver는 자신의 경계인 Assigned 상태와 지원 명령 조합만 확인한다.
+
+선택된 Observation Point는 Mission의 실행 Objective가 된다. 원래 Area ID는 Command에 남아 있고, Mission의 `ObjectiveId`와 `ObjectiveLocation`은 NPC가 지금 향할 구체적 Point를 나타낸다. Command ID를 양쪽에 보존하므로 나중에 실행 로그와 보고를 원래 명령까지 추적할 수 있다.
+
+Command constraint는 `bIsHardConstraint`에 따라 Mission의 Hard/Soft 배열로 분리된다. Information Requirement는 관측 후 무엇을 보고해야 하는지를 나타내므로 그대로 전달한다. Selector가 실패하면 `NoMatchingCandidates`와 `NoUsableCandidates` 같은 상세 원인을 유지한다.
+
+관련 파일:
+
+- `Source/Retry/AI/MissionResolver.h/.cpp`
+- `Source/Retry/Tests/MissionResolverTests.cpp`
+
+이번 단위에서 아직 하지 않는 일:
+
+- Level에서 Objective/Observation Actor 검색
+- NavMesh를 이용한 실제 도달 가능성 판정
+- Group member의 `NPCDecisionComponent`에 Mission 배포
+- Command를 Executing으로 전이
+
+이 작업들은 다음 World/Group 연결 단위에서 Resolver 앞뒤에 연결한다.
+
+사용자가 Mission Resolver 자동화 테스트 3개의 통과를 확인했다.
+
+### Phase 5 진행 기록 — Unit 5 Recon Mission World Adapter
+
+상태: **Integrated Complete**
+
+학습 목표는 순수 규칙이 실제 Unreal World와 만나는 Adapter 경계와, 런타임 계산과 Editor bake 데이터의 역할 차이를 이해하는 것이다.
+
+지금까지 Selector와 Resolver는 Actor를 검색하지 않았다. `FReconMissionWorldAdapter`가 처음으로 실제 World를 읽어 다음 변환을 수행한다.
+
+```text
+Command.TargetId
+→ 같은 Marker ID의 ObjectiveAreaActor 검색
+→ Objective에 연결된 ObservationPointActor 수집
+→ 시작 위치에서 각 Point까지 Nav 경로 계산
+→ Candidate 값 배열
+→ Selector와 Mission Resolver
+```
+
+World Adapter는 시작 위치를 스스로 고르지 않는다. 호출자가 `StartLocation`과 선택적으로 실제 NPC Actor를 pathfinding context로 전달한다. 따라서 다음 단위에서 Leader를 기준으로 할지 개별 Member를 기준으로 할지 별도로 결정할 수 있다.
+
+사용자 결정으로 첫 선택 기준은 가장 짧은 Nav 경로다. 직선거리가 아니라 NavMesh가 계산한 실제 우회 경로 길이를 사용한다. valid하고 partial이 아닌 경로만 hard constraint를 통과하며, 점수는 `-PathLength`이므로 짧을수록 높은 값이 된다. 가시성과 엄폐 가중치는 아직 섞지 않는다.
+
+자동화 테스트에서는 실제 NavMesh 대신 path evaluator 함수를 전달한다. 이로써 World의 Objective/Observation 검색, 최단 경로 선택, Objective 없음/중복과 모든 후보 도달 불가를 빠르게 검증한다. 생산 코드에서는 같은 경계에 UE Navigation query가 들어간다.
+
+### Baked Spatial/Tactical Data란 무엇인가
+
+사용자가 참고한 방식처럼 맵을 일정 크기의 Cell 또는 미리 배치한 Tactical Point로 나누고, 변하지 않는 공간 특성을 Editor에서 미리 계산해 Asset으로 저장할 수 있다.
+
+미리 계산하기 좋은 정보:
+
+- 여러 방향에서의 엄폐율
+- 특정 도시·거점·Objective에 대한 가시성
+- 고도와 지형 경사
+- 정적인 사격 가능 방향과 노출도
+- Nav 영역과 인접 Cell
+
+매 프레임 다시 계산해야 하는 정보:
+
+- 현재 적의 위치와 시야
+- 문이 열렸는지 여부
+- 파괴된 엄폐물
+- 연막과 폭발
+- 현재 통신 상태
+
+베이크 결과를 하나의 최종 점수로 저장하면 신중한 리더와 공격적인 리더가 같은 결론만 내리게 된다. 따라서 다음처럼 객관적인 feature를 분리해서 저장해야 한다.
+
+```text
+Cover = 0.8
+Exposure = 0.2
+VisibilityToObjective = 0.7
+Elevation = 0.6
+```
+
+런타임에는 지휘 교리와 현재 Leader의 성격을 가중치로 적용해 최종 점수를 만든다.
+
+```text
+Baked Feature Channels × Doctrine Weights
++ Baked Feature Channels × Leader Personality Modifiers
++ Runtime Nav Path Cost
++ Dynamic Threat / Communication Modifier
+= Candidate UtilityScore
+```
+
+현재 `FObservationPointCandidate`는 이 최종 점수를 받는 값 경계다. 미래에 베이크 Asset을 추가해도 Selector는 최고 점수를 고르고 Resolver는 Mission Context를 만드는 현재 책임을 유지한다.
+
+### 지휘 계층과 성격은 어디에서 만나는가
+
+상위 사령관이 “ReconArea_A를 정찰하라”고 명령하면 목표와 필수 제한은 이미 정해진다. 하위 Leader의 성격은 명령을 거부하거나 목표를 바꾸는 것이 아니라, 허용된 관측 후보 중 어떤 곳을 선호할지 결정한다.
+
+```text
+상위 Command의 Hard Constraint
+→ 작전 교리의 기본 선호
+→ 현재 Group Leader의 성격 보정
+→ 동점이면 안정적인 Point ID 순서
+```
+
+예를 들어 신중한 Leader는 `CoverPreference`, `FearSensitivity`, `Patience`가 높다. 같은 Objective를 볼 수 있는 후보 중 Exposure가 낮고 Cover가 높은 지점에 더 큰 점수를 준다. 공격적인 Leader는 `Aggression`과 `Courage`에 따라 Visibility와 유리한 사격 각도를 더 중시할 수 있다.
+
+현재 `UPersonalityComponent`에는 이 확장을 위한 `FPersonalitySnapshot`이 이미 있다. `CoverPreference`, `FearSensitivity`, `Aggression`, `Courage`, `TacticalSkill`, `Patience`, Stress를 후보 feature의 가중치로 변환할 수 있다.
+
+`TacticalSkill`은 단순히 공격적인 점수를 더하는 값보다 평가 품질을 나타내는 편이 자연스럽다. 숙련된 Leader는 위험·가시성 정보를 정확히 반영하고, 숙련도가 낮은 Leader는 일부 feature를 과소평가하거나 확신도가 낮아질 수 있다. 정확한 모델은 실제 플레이 테스트 후 결정한다.
+
+Group Mission에서는 Leader의 성격으로 그룹이 공유할 Observation Point를 한 번 선택한다. 일반 Member의 개별 성격은 선택된 목표로 이동한 뒤 엄폐, 교전, 추격 같은 micro decision에 계속 적용한다. 더 낮은 제대에 명령이 재하달되면 그 하위 Leader가 자신의 성격으로 로컬 후보를 다시 평가할 수 있다.
+
+이 구분이 중요한 이유는 성격이 상위 명령의 hard constraint를 깨면 지휘 시스템이 예측 불가능해지기 때문이다. 성격은 선택 가능한 후보 사이의 우선순위를 바꾸지만 `도달 가능해야 한다`, `금지 구역을 통과하지 않는다` 같은 필수 조건은 바꾸지 않는다.
+
+처음부터 Grid Asset을 만들지 않는 이유는 Cell 크기, 방향 샘플 수, World Partition streaming 단위와 갱신 정책이 아직 결정되지 않았기 때문이다. 지금은 확장 지점만 보존하고 실제 대형 Level에서 요구가 확인된 뒤 데이터 형식을 정한다.
+
+사용자가 World Adapter 자동화 테스트 3개의 통과를 확인했다.
+
+관련 파일:
+
+- `Source/Retry/AI/ReconMissionWorldAdapter.h/.cpp`
+- `Source/Retry/Tests/ReconMissionWorldAdapterTests.cpp`
+
+새 용어:
+
+- **World Adapter**: World의 Actor와 Engine Service를 순수 게임 규칙이 소비할 값으로 변환하는 경계다.
+- **Bake**: 반복 계산할 정적 데이터를 Editor에서 미리 계산하여 Asset으로 저장하는 과정이다.
+- **Partial Path**: 목표까지 완전히 도달하지 못하고 가능한 지점까지만 생성된 Nav 경로다.
+- **Tactical Point/Grid**: 엄폐·가시성·고도 같은 전술 공간 정보를 보관하는 Point 또는 Cell 집합이다.
+
+### Phase 5 진행 기록 — Unit 6 Atomic Group Mission Dispatch
+
+상태: **Integrated Complete**
+
+학습 목표는 여러 객체를 함께 변경할 때 “전부 성공하거나 전부 원래대로 돌아가는” 원자적 처리와, 그 책임을 권한 객체에 두는 이유를 이해하는 것이다.
+
+현재 `AGroupManagerActor`는 Command의 권위 원본을 소유하고 `UNPCDecisionComponent`는 각 NPC가 실행할 Mission을 소유한다. 그래서 `Executing`으로 바꾸기 전에 실제 생존 Member 전원이 Mission을 받았는지 확인해야 한다.
+
+```text
+Assigned Command
+→ 살아 있는 Leader와 Member 수신 가능 여부 사전 검사
+→ Leader 위치에서 World Adapter 실행
+→ 모든 Decision Component의 기존 Mission snapshot
+→ 동일 Mission을 전원에게 적용
+→ Execution Log와 Assigned → Executing 전이
+→ 성공: 새 Mission 유지
+→ 실패: snapshot으로 전원 복원
+```
+
+여기서 **원자적 배포**는 모든 NPC가 같은 전투 행동을 한다는 뜻이 아니다. 배포 시점에 같은 Mission을 받았다는 뜻이다. Mission overlay는 기존 전투 판단보다 낮은 우선순위이므로, 한 Member가 `Attack`이고 다른 Member가 `Patrol`이면 이동 시점은 달라질 수 있다.
+
+죽은 Member는 더 이상 명령 수신자가 아니므로 제외한다. 반면 살아 있지만 Controller가 없는 Member는 조용히 제외하지 않는다. 현재 배치 NPC는 자동 Possess되므로 이 상태는 정상적인 전력 손실보다 구성 또는 수명주기 오류일 가능성이 높다. 해당 오류가 있으면 Command는 `Assigned`에 머물고 아무 NPC도 새 Mission을 받지 않는다.
+
+롤백 전에 기존 Mission을 snapshot으로 저장하는 이유는 단순 `ClearMissionContext()`가 이전 임무까지 잃게 만들 수 있기 때문이다. 이전 Mission이 있던 NPC는 그 값을 복원하고, 원래 비어 있던 NPC만 빈 상태로 되돌린다.
+
+Leader death, Command 완료·실패·취소, Scenario reset에서는 Mission overlay를 제거한다. 이번 단위에서 `ARetryNPCCharacter::OnDeath()`와 기존 `OnLeaderDied()`를 실제로 연결했기 때문에 별도 Blueprint death event가 필요하지 않다.
+
+배포에 성공한 `NPCDecisionComponent`는 GroupManager가 weak reference로 기억한다. 따라서 terminal 정리 시 현재 `Members → Controller` 관계만 다시 찾는 것이 아니라 실제 Mission을 받았던 대상을 직접 정리한다. Weak reference는 대상이 먼저 파괴됐을 때 소유권을 강제로 연장하지 않고 안전하게 무효화된다.
+
+사용자가 자동화 테스트 3개의 통과를 확인했다. 전원 적용 후 `Executing` 전이, stale Run rollback, unavailable 수신자의 사전 거부와 terminal Mission 정리가 모두 검증됐다.
+
+현재 원자적 방식의 단점은 대규모 Group에서 한 명의 일시적 unavailable 상태가 전체 출발을 막는다는 것이다. 추후 증원·재Possess·차량 탑승이 생기면 Group Mission을 별도 `SquadBrain`이 소유하고 복귀 Member가 현재 Mission을 자동으로 재수신하도록 확장한다. 그 전에는 부분 배포로 `Executing`의 의미를 약화시키지 않는다.
+
+사용자 실습 후보는 자동화 테스트에서 stale Run rollback과 unavailable recipient 거부 결과를 확인하는 것이다. 실제 NavMesh 이동은 다음 hardcoded Command 시작 경계를 연결한 뒤 PIE에서 확인한다.
+
+관련 파일:
+
+- `Source/Retry/AI/GroupManagerActor.h/.cpp`
+- `Source/Retry/RetryNPCCharacter.cpp`
+- `Source/Retry/Tests/GroupMissionDispatchTests.cpp`
+
+새 용어:
+
+- **Atomic operation**: 관련된 변경이 전부 성공하거나 전부 이전 상태로 복구되는 처리다.
+- **Preflight**: 실제 상태를 바꾸기 전에 필요한 대상과 조건을 먼저 검사하는 단계다.
+- **Snapshot/Rollback**: 변경 전 상태를 저장하고 실패 시 그 값으로 되돌리는 방식이다.
+- **Fan-out**: 하나의 Group Mission을 여러 Member의 실행 상태로 배포하는 과정이다.
+
+### Phase 5 진행 기록 — Unit 7 Scenario Opening Orders
+
+상태: **Code Complete / Editor Integration Pending**
+
+학습 목표는 정적인 DataAsset 템플릿과 한 번의 플레이에서만 유효한 runtime 객체를 분리하고, 여러 Actor의 BeginPlay 순서에 의존하지 않는 시작 경계를 이해하는 것이다.
+
+`OpeningOrders`는 “두 진영이 왜 싸우는가”라는 설명 문구가 아니다. Scenario가 시작될 때 아직 존재하지 않는 HQ/Commander 시스템을 대신해 최초로 하달하는 실제 상위 Command 템플릿이다.
+
+```text
+DA_TS_ReconSecure_001
+  Opening Order: HQ → Group A → ReconArea_A
+        ↓ Run마다 새 CommandId
+GroupManager A: Proposed → Validated → Assigned
+        ↓ Leader 기준 World Adapter
+ReconObs_A1/A2 중 최단 Nav 경로 선택
+        ↓ 원자적 fan-out
+Group A Decision Components
+        ↓
+Blackboard Mission key → Behavior Tree Move To
+```
+
+DataAsset에는 매번 달라지는 `CommandId`를 저장하지 않는다. 작성자는 Issuer, Group, Verb, Target처럼 변하지 않는 의도를 설정하고, `BuildOpeningOrders()`가 새 Run마다 identity를 생성한다. 같은 Scenario를 Restart하면 같은 명령 내용이지만 추적 가능한 새 Command가 된다.
+
+Initializer가 자신의 `BeginPlay()` 안에서 즉시 명령을 보내면 NPC가 아직 Group에 등록되지 않았거나 AIController가 Possess하기 전일 수 있다. Unreal은 서로 다른 Actor의 BeginPlay 순서에 게임 규칙을 의존시키지 않는 편이 안전하다. 그래서 World의 다음 tick에 시작하며, callback에서도 현재 Run과 Definition이 여전히 일치하는지 다시 확인한다.
+
+World timer delegate는 Initializer UObject에 결합한다. PIE 종료나 Level 전환으로 Initializer가 사라지면 유효하지 않은 객체에 callback을 실행하지 않는다. 이는 이전 LLM 비동기 요청 teardown 결함에서 배운 수명 규칙과 같은 방향이다.
+
+현재 Group B는 Opening Order를 받지 않는다. Team/Perception과 기존 전투 AI는 계속 동작하므로 Group A의 Recon 도중 적을 발견하면 교전할 수 있다. Group A 리더는 상위 목표를 바꾸지 않고 `ReconObs_A1/A2` 중 실행 지점만 선택한다.
+
+사용자 실습은 DataAsset Details에서 Opening Order를 입력하고, Menu부터 실제 Level 이동까지 첫 end-to-end PIE를 확인하는 것이다.
+
+사용자가 DataAsset 입력 후 Scenario validation, Opening Order 실행 로그와 Group A의 실제 BT Mission 이동을 확인했다. 정적 템플릿이 새 runtime Command가 되어 Nav 후보 선택, Group dispatch, Blackboard/BT 이동까지 도달하는 흐름은 실제 레벨에서 연결됐다. Opening Order 자동화 테스트, 전투 후 Mission 복귀와 Restart/Return 수명은 다음 Phase 5 기능 체크포인트의 일괄 검증에 포함한다.
+
+관련 파일:
+
+- `Source/Retry/Scenario/ScenarioDefinition.h/.cpp`
+- `Source/Retry/Scenario/ScenarioInitializer.h/.cpp`
+- `Source/Retry/Tests/ScenarioOpeningOrderTests.cpp`
+
+새 용어:
+
+- **Template**: 여러 실행에서 복사해 쓰는 정적 원본 데이터다.
+- **Runtime identity**: 특정 실행에서 생성된 객체를 추적하기 위한 고유 ID다.
+- **Opening Order**: Scenario 시작 시 상위 지휘 체계가 최초로 하달한 작전 명령이다.
+- **Next-tick initialization**: 모든 Actor의 현재 초기화 단계가 끝난 뒤 다음 World tick에서 후속 연결을 수행하는 방식이다.
+
+### Phase 5 기능 배치 — 관측에서 HQ 보고와 완료까지
+
+상태: **Code Complete / Batch Verification Pending**
+
+이번 기능의 화면상 목표는 Group A의 Leader가 선택된 Observation Point에 도착하면 관측 결과가 HQ에 전달되고 Recon Command가 완료되는 것이다.
+
+```text
+Leader가 관측점 반경에 도착
+→ 전투 중이 아니면 관측 hold 시간 누적
+→ Operational Fact 생성
+→ Report Created
+→ 첫 스파이크에서는 즉시 Report Received
+→ Team Operational Memory에 Fact 저장
+→ 필수 정보 충족 확인
+→ Command Completed
+→ Group Mission overlay 정리
+```
+
+`Fact`는 “ReconArea_A가 관측됐다”처럼 하나의 작전 사실이다. `Report`는 여러 Fact를 HQ로 전달하는 봉투다. Team Memory는 Report가 `Received`가 되기 전에는 내용을 알 수 없다. 지금은 통신 지연이 없지만, 나중에 무전기·거리·재밍을 구현할 때 `Created`와 `Received` 사이에 통신 시스템을 넣을 수 있다.
+
+`UTeamOperationalMemorySubsystem`을 World 수명으로 둔 이유는 한 전장 안에서 Team이 공유하는 정보이면서 다른 Level/Run으로 넘어가면 폐기돼야 하기 때문이다. 개인 감정과 경험은 기존 `UMemoryComponent`, 작전 보고로 확인된 정보는 Team Operational Memory가 담당한다.
+
+관측 완료는 Group Leader를 기준으로 한다. World Adapter도 Leader 위치에서 공통 Observation Point를 선택했고, 지휘 계층에서 Leader가 Group Report를 책임진다. 일반 Member가 전투 때문에 늦는다고 보고가 영원히 막히지 않는다. 다만 Leader가 전투 상태라면 안정적인 관측으로 보지 않아 hold 시간이 초기화된다.
+
+`FCommandExecutionMonitor`는 World를 직접 찾지 않는다. GroupManager가 “Leader 생존 여부, 도착 여부, 관측 가능 여부, 경과 시간”을 값으로 만들어 전달하고 Monitor는 Waiting, ObservationReady, Timeout 같은 결과만 반환한다. 이 분리 덕분에 이동과 전투를 실제로 재생하지 않고도 완료 규칙을 빠르게 테스트할 수 있다.
+
+도착 판정은 3D 직선거리 하나로 계산하지 않는다. Nav 이동은 바닥 평면의 수평 거리와 Character Capsule의 높이·반경을 따로 고려해 멈추므로, 관측 판정도 수평 반경과 수직 허용치를 분리한다. 그렇지 않으면 화면상 도착한 NPC의 캡슐 중심과 바닥 Marker 사이 Z 차이가 수평 오차에 더해져 도착을 놓칠 수 있다. 반대로 수직 허용치를 별도로 제한하므로 다른 층에 있는 NPC를 같은 관측점 도착으로 오인하지 않는다.
+
+Unreal의 높이 축은 `Z`다. Observation Point Actor는 레벨 디자이너가 의미와 방향을 배치하는 Marker이고, AI가 실제로 밟을 좌표는 Marker 주변의 NavMesh 표면으로 투영한다. 따라서 언덕이나 경사에서도 Mission의 Z가 이동 가능한 바닥 높이와 일치한다. 편집기에서도 Marker는 `End` 키 등으로 바닥에 스냅해 시각적 의미를 정확히 유지해야 하며, 런타임 투영은 잘못된 배치를 무제한으로 숨기는 용도가 아니라 작은 배치 오차와 Nav 표면 차이를 정규화하는 안전 경계다.
+
+Opening Order에 Information Requirement가 비어 있어도 첫 수직 슬라이스는 `AreaObserved` implicit Fact를 만든다. 이후 DataAsset에 `AreaObserved / ReconArea_A / Required=true`를 명시하면 같은 실행 경계가 작성자의 요구사항을 그대로 사용한다. 아직 실제 sensor evaluator가 없는 `EnemyCountKnown` 같은 predicate는 도착했다는 이유만으로 사실을 꾸며내지 않고 거부한다.
+
+관련 파일:
+
+- `Source/Retry/AI/OperationalTypes.h/.cpp`
+- `Source/Retry/AI/TeamOperationalMemorySubsystem.h/.cpp`
+- `Source/Retry/AI/CommandExecutionMonitor.h/.cpp`
+- `Source/Retry/AI/GroupManagerActor.h/.cpp`
+- `Source/Retry/Scenario/ScenarioExecutionLogSubsystem.h/.cpp`
+- `Source/Retry/Scenario/ScenarioInitializer.cpp`
+
+새 용어:
+
+- **Operational Fact**: 출처와 시점, 대상이 명확한 하나의 작전 사실이다.
+- **Report Received Gate**: 보고가 수신되기 전에는 공유 정보로 사용하지 않는 경계다.
+- **Idempotent**: 같은 Report가 다시 도착해도 결과가 한 번 처리한 것과 같게 유지되는 성질이다.
+- **Completion Monitor**: 명령의 성공·실패·대기 조건을 관찰해 상태 전이를 결정하는 규칙이다.
+
 ### 눈에 보이는 목표
 
 정찰 그룹이 목표 지역에 바로 달려가는 대신 레벨에 배치된 관측 후보를 평가하고, 한 곳으로 이동해 필요한 정보를 관측한 뒤 HQ에 보고한다.
@@ -940,18 +1265,15 @@ Blackboard는 BT가 실행에 필요한 현재 값만 공유하고, 복잡한 �
 - 에디터에서 모든 판단 데이터를 한눈에 보기는 어려움
 - 디버그 UI와 로그를 별도로 잘 만들어야 함
 
-## 12. 구현하면서 반복할 학습 흐름
+## 12. 기능 배치로 반복할 학습 흐름
 
-각 학습 단위는 다음 순서로 진행한다.
-
-1. 이번에 게임에서 달라질 한 가지를 확인한다.
-2. 새 Unreal/C++ 개념을 현재 프로젝트 예시로 설명한다.
-3. 선택할 설계가 있으면 대안과 tradeoff를 설명한다.
-4. 에이전트 작업, 함께 할 작업, 사용자 실습 후보를 나눈다.
-5. 작은 범위만 구현한다.
-6. 빌드 또는 에디터에서 결과를 확인한다.
-7. 실제 호출 흐름을 코드 파일과 함께 다시 설명한다.
-8. 이 문서에 배운 내용과 남은 질문을 갱신한다.
+1. 사용자에게 보이는 end-to-end 기능과 완료 조건을 정한다.
+2. 필요한 새 Unreal/C++ 개념과 설계 tradeoff를 이 문서에 기록한다.
+3. 코드는 책임별로 나누고 자동화 테스트는 작은 유닛 단위로 작성한다.
+4. 배치 구현 중에는 사용자 Live Coding·테스트를 요구하지 않는다.
+5. 기능 코드와 테스트가 모두 준비되면 한 번의 코드 반영을 요청한다.
+6. 자동화 테스트 전체 목록을 순차 실행하고 모두 통과하면 에디터 Asset 통합과 PIE를 수행한다.
+7. 실제 호출 흐름, 사용자 검증 결과와 남은 질문을 문서에 갱신한다.
 
 ## 13. 지금 외우지 않아도 되는 것
 
