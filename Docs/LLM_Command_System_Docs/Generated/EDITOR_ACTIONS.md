@@ -1569,3 +1569,205 @@ LLM 서버 성공 응답과 `SetOrderForAll` 적용은 Phase 2 계획 작성 자
 ### 지연 응답 검증
 
 응답을 `TimeoutSeconds`보다 늦게 반환할 수 있는 테스트 서버가 있을 때 수행한다. timeout 뒤 늦은 응답이 게임 상태에 적용되지 않고, 다음 pending request의 timeout이나 완료를 방해하지 않아야 한다.
+## Phase 6 기능 체크포인트 — Waypoint 없는 Secure Area
+
+이 체크포인트는 코드 반영과 자동화 테스트가 모두 끝난 뒤 Asset 통합을 한 번만 수행한다. Route/Waypoint Actor는 만들거나 배치하지 않는다.
+
+자동화 검증 결과(2026-08-06): 아래 여섯 테스트 묶음이 모두 통과했다. 현재 단계는 Scenario Definition 통합과 PIE 검증이다.
+
+### 1. 코드 반영
+
+1. Live Coding으로 이번 C++ 변경 전체를 한 번 반영한다.
+2. Live Coding이 구조 변경 때문에 거부될 때만 사용자가 Editor를 종료하고 전체 Editor 빌드를 수행한다.
+3. 에이전트는 빌드를 실행하지 않는다.
+
+### 2. 자동화 테스트
+
+Session Frontend의 Automation에서 다음 묶음을 순서대로 실행한다.
+
+```text
+Retry.Mission.Resolver
+Retry.Mission.SecureWorldAdapter
+Retry.Mission.AreaControl
+Retry.Operational.Report
+Retry.Mission.GroupDispatch
+Retry.Scenario.OpeningOrders
+```
+
+이번 배치에서 새로 추가된 세부 테스트는 다음과 같다.
+
+```text
+Retry.Mission.Resolver.BuildsSecureAreaMission
+Retry.Mission.Resolver.RejectsInvalidSecureArea
+Retry.Mission.SecureWorldAdapter.ResolvesProjectedObjective
+Retry.Mission.SecureWorldAdapter.RejectsWorldFailures
+Retry.Mission.AreaControl.RequiresEntryAndClearArea
+Retry.Mission.AreaControl.RequiresStableHold
+Retry.Mission.AreaControl.ReportsDistinctFailures
+Retry.Operational.Report.BuildsSecureAreaFact
+Retry.Mission.GroupDispatch.StartsSecureAreaExecution
+```
+
+### 3. Scenario Definition 통합
+
+자동화가 모두 통과한 뒤 `/Game/Scenarios/Definitions/DA_TS_ReconSecure_001`을 연다.
+
+기존 Group A Recon Opening Order는 그대로 유지하고 `Opening Orders`에 Group B용 element 하나를 추가한다.
+
+```text
+Issuer Id: HQ
+Assigned Group Id: B
+Verb: Secure
+Target Type: Area
+Target Id: ReconArea_A
+Priority: 50
+Information Requirements[0]
+  Requirement Id: AreaSecured
+  Subject Id: ReconArea_A
+  Required: true
+Completion Criteria
+  Minimum Hold Seconds: 3.0
+  Timeout Seconds: 120.0
+```
+
+`Constraints`와 `Required Condition Ids`는 이번 기준선에서 비워 둔다. 별도 Route/Waypoint Actor를 추가하지 않는다. 저장 후 `Lvl_TS_ReconSecure_001`에서 `Validate Scenario Setup`을 실행한다.
+
+### 4. PIE 통합 검증
+
+1. Scenario Menu에서 `DA_TS_ReconSecure_001`을 시작한다.
+2. Group A는 기존 Recon Mission으로, Group B는 `ReconArea_A` 직접 Secure Mission으로 이동하는지 확인한다.
+3. Group B leader가 Area 안에 있고 살아 있는 적이 없으면 3초 hold가 시작되는지 확인한다.
+4. hold 중 살아 있는 적이 Area 안으로 들어오면 hold interrupted가 기록되고, 적이 사라진 뒤 0초부터 다시 시작하는지 확인한다.
+5. 완료 후 실행 기록에는 `AreaSecured` Fact, Secure Area Report Created/Received, Command Completed가 순서대로 저장되는지 확인한다. 현재 Output Log에는 Team Memory의 Secure Report Received와 Secure Area Completed가 명시적으로 출력된다. 이 둘이 출력되면 앞선 Fact/Created event 기록도 성공한 것이다.
+6. Restart 후 같은 흐름이 새 Run ID로 다시 시작하고, Return 후 이전 monitor와 command가 남지 않는지 확인한다.
+
+대표 로그 형태:
+
+```text
+[Group:B] Secure Mission resolved...
+[Scenario] Opening Order executing. Group:B...
+[Group:B] Secure monitoring started...
+[Group:B] Secure control hold started...
+[TeamMemory:2] Secure Area Report received...
+[Group:B] Secure Area completed...
+```
+
+`AreaSecured`와 `SecureReportCreated`는 위 Output Log 목록에 별도 문장으로 나타나지 않고 `ScenarioExecutionLogSubsystem` event의 `ResultCode`로 보존된다.
+
+현재 이 통합은 Recon과 Secure가 동시에 시작되는 독립 Opening Order 검증이다. `Recon 완료 후 Secure 시작` 순차 하달은 아직 구현되지 않았으므로 이번 결과로 간주하지 않는다.
+
+## Phase 6 기능 체크포인트 — Scripted Follow Up Order
+
+이번 변경은 새 `USTRUCT`와 `UPROPERTY`로 `ScenarioDefinition` Asset schema를 확장한다. 에디터를 종료한 뒤 사용자가 `RetryEditor` 전체 빌드와 재시작을 수행하는 것을 권장한다. Codex는 빌드를 실행하지 않는다.
+
+### 1. 자동화 테스트
+
+빌드·재시작 후 다음 묶음을 순서대로 실행한다.
+
+```text
+Automation RunTests Retry.Scenario.OpeningOrders+Retry.Scenario.FollowUpOrders+Retry.Operational.TeamMemory+Retry.Mission.Resolver+Retry.Mission.SecureWorldAdapter+Retry.Mission.AreaControl+Retry.Operational.Report+Retry.Mission.GroupDispatch
+```
+
+검증 결과(2026-08-06): 전체 통과. 자기 `TArray` element를 직접 다시 `Add`하던 테스트 fixture assertion 수정 후 Editor crash도 재발하지 않았다.
+
+새 세부 테스트:
+
+```text
+Retry.Scenario.FollowUpOrders.CreatesRuntimeIdentity
+Retry.Scenario.FollowUpOrders.RejectsInvalidConditions
+Retry.Scenario.FollowUpOrders.WaitsForTeamFact
+Retry.Scenario.FollowUpOrders.PreservesPerGroupOrder
+Retry.Scenario.FollowUpOrders.RequiresAllFacts
+```
+
+### 2. 기존 병렬 명령 제거와 격리 조건 유지
+
+이전 병렬 Secure 검증을 위해 추가한 Group B `Secure` Opening Order를 제거한다. Follow Up 순서 자체를 먼저 검증할 때는 전투 변수를 섞지 않도록 임시 동일 Team 설정을 유지한다. Group Manager와 소속 NPC의 TeamID는 반드시 일치해야 한다.
+
+순차 하달 검증이 성공한 뒤에만 원래 전투 팀을 복원한다.
+
+```text
+Group A Manager / Group A NPCs: TeamID 1
+Group B Manager / Group B NPCs: TeamID 2
+```
+
+### 3. Opening Recon 확인
+
+`DA_TS_ReconSecure_001 > Opening Orders[0]`은 Group A의 기존 Recon 명령으로 유지한다. 후속 조건이 사용할 Fact가 필요하므로 다음 항목을 확인한다.
+
+```text
+Assigned Group Id: A
+Verb: Recon
+Target Type: Area
+Target Id: ReconArea_A
+Information Requirements[0]
+  Requirement Id: AreaObserved
+  Subject Id: ReconArea_A
+  Required: true
+```
+
+### 4. Follow Up Secure 추가
+
+`Follow Up Orders`에 element 하나를 추가한다.
+
+```text
+Required Facts[0]
+  Predicate Id: AreaObserved
+  Subject Id: ReconArea_A
+  Source Group Id: A
+
+Command
+  Issuer Id: HQ
+  Assigned Group Id: A
+  Verb: Secure
+  Target Type: Area
+  Target Id: ReconArea_A
+  Priority: 50
+  Information Requirements[0]
+    Requirement Id: AreaSecured
+    Subject Id: ReconArea_A
+    Required: true
+  Completion Criteria
+    Minimum Hold Seconds: 3.0
+    Timeout Seconds: 120.0
+```
+
+Follow Up `Command`의 `Constraints`와 `Required Condition Ids`는 비워 둔다. 저장 후 `Validate Scenario Setup`을 실행한다.
+
+### 5. PIE 순차 실행 검증
+
+1. 시작 직후 `Follow Up monitoring started ... Pending:1`을 확인한다.
+2. Group A가 먼저 Recon 관측 지점으로 이동하는지 확인한다.
+3. `Recon Report received`와 `Recon completed` 이전에는 Follow Up 실행 로그가 없어야 한다.
+4. Recon 완료 뒤 `Follow Up Order executing. Group:A`가 한 번만 출력되는지 확인한다.
+5. 같은 Group A가 `ReconArea_A` 중심으로 이동하여 Secure monitor와 hold를 시작하는지 확인한다.
+6. 동일 Team 격리 상태에서 3초 동안 점유한 뒤 Secure Report와 Completed가 기록되는지 확인한다.
+7. Restart 시 새 Run ID에서 다시 Pending 1로 시작하고 이전 Run Fact가 즉시 Follow Up을 해제하지 않는지 확인한다.
+8. Return 후 이전 Run의 Follow Up 실행 로그가 추가로 나오지 않는지 확인한다.
+
+위 순차 실행이 성공하면 Team A를 1, Team B를 2로 복원해 전투 포함 PIE를 별도로 실행한다. 이 단계에서는 적이 Area에 있으면 contested가 유지되고, 적이 제거되거나 이탈한 뒤 3초 동안 점유해야 Secure가 완료되는지 확인한다.
+
+이번 체크포인트는 0~5 구간을 디자이너가 고정한 결정적 흐름이다. 이후 `AreaSecured` 다음 단계는 Operational Objective와 Commander Planner가 동적으로 명령을 선택하도록 확장한다.
+
+검증 결과(2026-08-06): 위 자동화 묶음, 순차 Recon/Secure, Restart/Return, 적 조우·교전 후 점유 완료까지 모두 통과했다.
+
+## Scenario Use LLM 옵션 수정 체크포인트
+
+Scenario Definition의 `Use LLM`을 끈 실행에서는 개인 기억 임계값과 그룹 감정 임계값 어느 쪽도 LLM HTTP 요청 또는 fallback을 만들면 안 된다. 일반 비-Scenario 레벨은 기존 동작을 유지한다.
+
+### 1. 코드 반영과 자동화
+
+Live Coding으로 한 번 반영한 뒤 다음 명령을 실행한다.
+
+```text
+Automation RunTests Retry.Scenario.LLMPolicy+Retry.Scenario.Runtime
+```
+
+### 2. PIE 확인
+
+1. `DA_TS_ReconSecure_001`의 `Use LLM`을 끈 상태로 시작한다.
+2. 개인 기억 또는 그룹 감정 점수가 임계값을 넘는 상황에서도 로컬 Llama 서버 요청과 LLM fallback 대사가 발생하지 않는지 확인한다.
+3. 기존 Recon → Follow Up Secure → 전투 후 완료 흐름은 그대로 수행되는지 확인한다.
+4. 필요하면 `Use LLM`을 켠 별도 실행에서 요청이 다시 허용되는지 대조한다.
+
+Codex는 빌드와 Automation을 실행하지 않았다. 사용자 검증 후 이 체크포인트를 완료로 전환한다.

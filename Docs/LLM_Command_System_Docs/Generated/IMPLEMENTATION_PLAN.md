@@ -564,6 +564,80 @@ hardcoded ReconArea
 
 ## 7. Phase 6 — SecureArea Vertical Slice
 
+### Phase 6 기능 배치 구현 상태 — Direct Objective Area 기준선
+
+자동화 검증 결과(2026-08-06): 사용자가 `Retry.Mission.Resolver`, `Retry.Mission.SecureWorldAdapter`, `Retry.Mission.AreaControl`, `Retry.Operational.Report`, `Retry.Mission.GroupDispatch`, `Retry.Scenario.OpeningOrders` 묶음을 실행했고 전부 통과했다. 이후 Asset 연결과 PIE 이동·점유·완료도 확인하여 Direct Objective Area 기준선은 **Integration Complete** 상태다.
+
+PIE 핵심 흐름 검증 결과(2026-08-06): Secure 이동·점유·Team Memory 수신·완료 로그가 정상 출력됐다. `AreaSecured`와 `SecureReportCreated`는 Output Log 문장이 아니라 `ScenarioExecutionLogSubsystem`에 저장되는 event `ResultCode`다. 이후 `SecureReportReceived`와 Command Completed가 성공했으므로 두 선행 event 기록도 성공한 상태다.
+
+- `Secure + Area` 명령은 별도의 Route/Waypoint Actor 없이 `AObjectiveAreaActor`를 직접 해석한다.
+- `FSecureAreaWorldAdapter`가 목표 Area를 유일하게 찾고, Area 중심을 NavMesh에 투영한 뒤 leader 시작점에서 완전한 path가 존재하는지 확인한다.
+- `FMissionResolver::ResolveSecureArea`가 semantic target을 실제 `FMissionContext`로 변환하고 hard/soft constraint 및 information requirement를 보존한다.
+- `AGroupManagerActor`의 공통 mission dispatch가 Recon과 Secure를 구분해 전원에게 원자적으로 배포한다.
+- `FAreaControlEvaluator`는 leader 진입, 생존 전투원, 적 점유, 연속 점유 시간, timeout을 순수 규칙으로 판정한다. 적이 다시 진입하면 연속 점유 시간이 초기화된다.
+- 점유 완료 시 `AreaSecured` Fact와 Report를 만들고 Team Operational Memory가 수신한 뒤 Command를 Completed로 전이한다.
+- 팀 판정은 기존 NPC Controller의 friendly/hostile 규칙을 사용하여 전투 인식과 점령 판정의 의미를 맞춘다.
+- Route Waypoint Actor, 진입 방향 해석, 복수 경로 후보, 리더 성격 기반 가중치는 이번 배치에 포함하지 않는다. 추후 Baked Tactical Cell/Route 데이터가 후보를 제공하고 personality가 점수 가중치를 조절하도록 확장한다.
+- 현재 Opening Order는 동시에 시작되는 독립 명령이다. `Recon Report 수신 → Secure 발령` 순차 의존성은 이후 command orchestration 단계에서 구현한다.
+
+### Phase 6 코드 소유권과 실행 흐름
+
+```text
+Opening Order(Secure + Area)
+→ ScenarioInitializer
+→ GroupManager command assignment
+→ SecureAreaWorldAdapter(Objective 조회/Nav 투영/path 확인)
+→ MissionResolver
+→ NPCDecisionComponent 전원 mission 적용
+→ GroupManager area monitoring
+→ AreaControlEvaluator
+→ AreaSecured Fact/Report
+→ TeamOperationalMemory
+→ Command Completed
+```
+
+관련 신규 파일은 `AreaControlEvaluator.h/.cpp`, `SecureAreaWorldAdapter.h/.cpp`이며, 세밀한 자동화 테스트는 resolver, world adapter, control rule, group dispatch, operational report 단위로 나뉜다.
+
+### Phase 6 기능 배치 — Scripted Follow Up Orders
+
+자동화 회귀 수정(2026-08-06): `RejectsInvalidConditions` 테스트가 같은 `TArray` 내부 element를 `Add` 인자로 직접 전달해 재할당 안전 assertion을 발생시켰다. 기능 코드 문제가 아니라 테스트 fixture의 aliasing 문제였으며, element를 로컬 값으로 복사한 뒤 추가하도록 수정했다.
+
+자동화 검증 결과(2026-08-06): 수정 후 `Retry.Scenario.FollowUpOrders`를 포함한 기능 체크포인트 테스트가 전부 통과했고 Editor crash도 재발하지 않았다.
+
+PIE 통합 검증 결과(2026-08-06): `Group A Recon → AreaObserved → Group A Secure → AreaSecured` 순차 실행, Restart/Return 정리, 적 조우·교전 뒤 점유와 완료까지 모두 정상 동작했다. 이 배치는 **Integration Complete** 상태다.
+
+테스트 실행 형식 결정: 이후 기능 체크포인트는 여러 prefix를 개별 명령으로 나열하지 않고 `Automation RunTests PrefixA+PrefixB+PrefixC` 한 줄로 제공한다. 세부 테스트 이름은 결과 대조용 목록으로 유지한다.
+
+`Follow Up Order`는 향후 Commander Planner를 대체하지 않는다. 디자이너가 시나리오 판단 구간 일부를 결정적으로 고정하는 테스트·디버깅·연출 레일이다.
+
+- `FScenarioFactCondition`은 predicate, subject, 선택적 source group으로 시작 조건을 표현한다.
+- `FScenarioFollowUpOrder`는 실행할 `FCommandIntent`와 모두 충족해야 하는 `RequiredFacts`를 소유한다.
+- Fact의 Team ID는 작성하지 않고 수신 그룹의 `TeamID`에서 결정한다. 다른 팀이나 이전 Run의 정보로 명령이 해제되지 않는다.
+- `UTeamOperationalMemorySubsystem::HasReceivedFact`는 Command ID에 묶이지 않은 후속 명령용 team/run/fact query를 제공한다.
+- `FScenarioFollowUpOrderEvaluator`가 all-of Fact gate와 같은 그룹의 작성 순서를 순수 규칙으로 검사한다.
+- `AScenarioInitializer`는 0.2초 간격으로 대기 명령을 평가한다. 이전 명령이 terminal 상태가 된 뒤 명시적으로 정리하고 다음 명령을 assign/dispatch한다.
+- 서로 다른 그룹의 첫 대기 명령은 독립적으로 시작할 수 있고, 같은 그룹의 후속 명령은 DataAsset 배열 순서를 지킨다.
+- EndPlay, Restart, Return 또는 Run ID 변경 시 timer와 pending order를 정리한다.
+- 현재 목표 흐름은 `Group A Recon → AreaObserved → Group A Secure → AreaSecured`다. 이후 Commander는 같은 Fact/Command 경계를 사용해 비고정 구간의 명령을 생성한다.
+
+### Scenario `Use LLM` 실행 정책 수정
+
+결함 원인(2026-08-06): `FScenarioLaunchOptions::bUseLLM`은 Run Context에 저장만 되고 개인 기억 임계값 및 그룹 감정 임계값의 LLM 요청 경로에서 조회되지 않았다. 따라서 Scenario Definition에서 `Use LLM`을 끄더라도 `ULLMRequestQueue`가 HTTP 요청을 만들었다.
+
+- 활성 Scenario에서는 유효한 현재 Run Context가 `bUseLLM=true`일 때만 개인·그룹 요청을 허용한다.
+- `bUseLLM=false`이면 producer에서 prompt 생성을 건너뛰고, Queue 진입점에서도 다시 차단하여 다른 호출 경로가 생겨도 HTTP 및 fallback이 시작되지 않게 한다.
+- 활성 Scenario의 Run Context가 유효하지 않으면 안전하게 차단한다.
+- Scenario Runtime이 활성화되지 않은 기존 일반 레벨은 이전 LLM 동작을 유지한다.
+- 정책 자체는 `ShouldAllowLLMRequests` 순수 함수와 `Retry.Scenario.LLMPolicy.RespectsLaunchOption` 자동화 테스트로 고정한다.
+
+검증 명령:
+
+```text
+Automation RunTests Retry.Scenario.LLMPolicy+Retry.Scenario.Runtime
+```
+
+에이전트는 사용자 Live Coding 흐름을 보존하기 위해 빌드와 Automation 실행을 수행하지 않았다. 이 수정은 **Code Complete / User Verification Pending** 상태다.
+
 ### 신규 파일
 
 - 별도 resolver/task 세트를 만들지 않는다. `FMissionResolver`와 `UCommandExecutionMonitor`를 확장한다.

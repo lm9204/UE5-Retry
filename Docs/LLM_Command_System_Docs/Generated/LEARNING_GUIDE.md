@@ -1165,6 +1165,88 @@ NPC가 관측
 
 ## 9. Phase 6 — SecureArea
 
+### 이번 기능 배치에서 배우는 것 — 지역을 직접 확보하기
+
+2026-08-06 사용자 검증에서 Secure resolver, World adapter, Area control, operational report, group dispatch, opening order 자동화 테스트가 모두 통과했다. 이제 자동화로 분리해 확인한 부품들을 기존 Scenario Definition에 연결하여 실제 이동·점유·보고 흐름을 확인하는 통합 단계다.
+
+이번 기준선에서 `Secure Area`는 “미리 놓인 길을 따라가라”가 아니라 “이 ID의 지역을 확보하라”는 목표다. 따라서 코드가 먼저 `Objective Area Actor`를 찾고, 그 중심을 NavMesh 높이에 맞춘 실제 이동 위치로 바꾼다. Waypoint Actor는 사용하지 않는다.
+
+`World Adapter`는 레벨의 Actor와 NavMesh를 읽는 경계다. `Mission Resolver`는 검증된 명령을 NPC가 실행할 구체적인 Mission으로 바꾼다. `Area Control Evaluator`는 World Actor를 직접 읽지 않고 이미 계산된 숫자와 bool만 받아 점령 여부를 판단한다. 이 분리 덕분에 점령 규칙은 작은 자동화 테스트로 빠르게 검증할 수 있고, 나중에 후보 위치를 만드는 방식만 베이크 데이터로 교체할 수 있다.
+
+점령 완료는 단순 도착이 아니다.
+
+- 살아 있는 leader가 Area 안에 있어야 한다.
+- 최소 한 명의 아군 전투원이 Area 안에 있어야 한다.
+- 살아 있는 적이 Area 안에 없어야 한다.
+- 위 상태가 `Minimum Hold Seconds` 동안 연속으로 유지되어야 한다.
+- 적이 다시 들어오거나 leader가 나가면 연속 시간이 0부터 다시 시작된다.
+- 완료되면 `AreaSecured` Fact가 Report에 담기고 Team Memory가 수신해야 Command가 Completed가 된다.
+
+실무에서 이런 구조는 목표의 의미와 이동 후보 생성 방식을 분리할 때 사용한다. 지금은 Area 중심이 하나의 기준 후보다. 추후에는 맵을 셀로 나누고 엄폐도·노출도·가시성·위험도·접근 방향을 베이크한 뒤, 같은 resolver 앞단에서 여러 후보를 공급할 수 있다. 신중한 leader는 낮은 위험도에 큰 가중치를 주고, 공격적인 leader는 속도나 압박 효과에 큰 가중치를 주게 만들 수 있다. 즉 이번 구현은 그 확장을 막지 않지만, 아직 존재하지 않는 베이크 시스템을 미리 흉내 내지는 않는다.
+
+현재 알아둘 제한은 Opening Order들이 시나리오 시작과 동시에 독립적으로 실행된다는 점이다. Recon Report를 조건으로 Secure 명령을 나중에 발령하는 것은 command prerequisite/orchestration 기능에서 다룬다.
+
+관련 코드 위치:
+
+- `AI/SecureAreaWorldAdapter`: 레벨 목표와 NavMesh 해석
+- `AI/MissionResolver`: Secure 명령을 Mission으로 변환
+- `AI/AreaControlEvaluator`: 점유/경합/유지/실패 판정
+- `AI/GroupManagerActor`: 실제 World 관찰, 팀 판정, 보고 및 완료 전이
+- `AI/OperationalTypes`: `AreaSecured` Fact/Report 생성
+
+새 용어:
+
+- `Contested`: Area 안에 살아 있는 적이 있어 점유가 성립하지 않는 상태.
+- `Stable Hold`: 점유 조건이 끊기지 않고 연속으로 유지된 시간.
+- `Baked Tactical Data`: 런타임마다 비싼 공간 계산을 반복하지 않도록 에디터나 빌드 과정에서 미리 계산해 저장한 전술 데이터.
+
+### Scripted Follow Up과 Commander 판단의 관계
+
+자동화 검증 결과(2026-08-06): Follow Up schema, team/run Fact gate, source group 조건, all-of 조건, 그룹별 작성 순서 테스트가 모두 통과했다. 자동화 테스트 prefix는 이후 `Automation RunTests A+B+C` 형식으로 한 번에 실행한다.
+
+Follow Up Order는 “사령관이 스스로 판단했다”는 뜻이 아니다. 디자이너가 특정 Fact 이후 실행할 명령을 미리 작성한 것이다. 자동화 테스트에서는 같은 입력으로 같은 경로를 재현하고, 게임 연출에서는 반드시 거쳐야 할 절차를 고정하는 데 사용한다.
+
+예를 들어 전체 판단 과정을 0부터 10까지라고 할 때 0~5는 Follow Up Order로 고정하고, 6~10만 Commander Planner나 LLM이 선택하도록 만들 수 있다. 이때도 두 경로는 모두 같은 `FCommandIntent`, validation, Mission Resolver, Team Memory를 사용하므로 실행 시스템을 두 벌 만들지 않는다.
+
+```text
+디자이너 고정 구간
+Opening Recon → AreaObserved → Follow Up Secure
+
+동적 판단 구간(추후)
+AreaSecured 이후 Team Memory/성격/교리/베이크 데이터를 보고
+Commander가 Defend, Advance, Regroup 중 하나를 선택
+```
+
+Follow Up 조건은 수신 그룹의 Team Memory만 조회한다. 따라서 적군의 보고나 이전 Scenario Run의 Fact가 아군 명령을 실수로 시작시키지 않는다. `Source Group Id`를 비우면 같은 팀의 어느 그룹이 보고해도 되고, 값을 지정하면 그 그룹의 보고만 인정한다.
+
+같은 그룹에 여러 Follow Up Order를 작성하면 배열 앞의 명령이 먼저 소비될 때까지 뒤 명령은 기다린다. 서로 다른 그룹은 각자의 첫 명령을 독립적으로 평가한다. 이것이 디자이너가 고정 절차를 읽고 예측할 수 있게 만드는 결정적 순서 규칙이다.
+
+2026-08-06 PIE에서는 순차 Recon/Secure뿐 아니라 적을 만난 뒤 교전하고 지역을 확보하여 완료하는 실제 흐름까지 확인했다. 즉 Follow Up은 테스트용 데이터 전환에 그치지 않고 기존 전투와 mission execution 사이에서도 정상적으로 이어진다.
+
+### `Use LLM`은 요청 생성 정책이다
+
+Scenario Definition의 `Use LLM`은 개인용인지 그룹용인지 고르는 옵션이 아니다. 현재 Scenario Run 전체가 외부 LLM 요청을 사용할지를 정하는 실행 정책이다. 꺼져 있다면 개인 기억 임계값과 그룹 감정 임계값 모두 요청을 만들지 않아야 한다.
+
+이번 결함은 옵션이 Run Context에 저장됐지만 실제 요청 경로가 읽지 않아 발생했다. 수정된 흐름은 두 겹으로 확인한다.
+
+```text
+개인/그룹 producer
+→ 현재 Scenario 정책 확인
+→ 허용될 때만 prompt/request 생성
+→ LLM Request Queue에서 정책을 다시 확인
+→ HTTP 전송 또는 fallback
+```
+
+앞의 확인은 불필요한 prompt 생성을 줄이고, Queue의 최종 확인은 앞으로 새로운 요청 호출자가 생겨도 옵션을 우회하지 못하게 한다. Scenario가 없는 기존 레벨은 호환성을 위해 이전처럼 LLM을 허용하지만, 활성 Scenario의 Run Context가 잘못됐다면 요청을 차단한다. 이를 `fail closed`라고 부른다.
+
+관련 코드 위치:
+
+- `Scenario/ScenarioTypes`: Scenario Run의 LLM 허용 정책
+- `LLMRequestQueue`: 모든 요청의 최종 차단 지점
+- `RetryNPCCharacter`: 개인 요청의 조기 차단
+- `AI/GroupManagerActor`: 그룹 요청의 조기 차단
+- `Tests/ScenarioRuntimeTests`: 옵션별 정책 자동화 테스트
+
 ### 눈에 보이는 목표
 
 Recon 결과를 받은 뒤 Combat Group A와 B가 서로 다른 Route 또는 Target을 받고 목표 지역에 진입한다.
