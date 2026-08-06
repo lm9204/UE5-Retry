@@ -27,6 +27,89 @@ namespace ScenarioOpeningOrderTests
 		Order.TargetId = TEXT("ReconArea_A");
 		return Order;
 	}
+
+	FScenarioFollowUpOrder MakeFollowUpOrder(
+		const FName GroupId = TEXT("A"))
+	{
+		FScenarioFollowUpOrder FollowUp;
+		FollowUp.Command = MakeOpeningOrder(GroupId);
+		FollowUp.Command.Verb = ECommandVerb::Secure;
+		FScenarioFactCondition& Condition =
+			FollowUp.RequiredFacts.AddDefaulted_GetRef();
+		Condition.PredicateId = TEXT("AreaObserved");
+		Condition.SubjectId = TEXT("ReconArea_A");
+		return FollowUp;
+	}
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FScenarioFollowUpOrdersCreateRuntimeIdentity,
+	"Retry.Scenario.FollowUpOrders.CreatesRuntimeIdentity",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FScenarioFollowUpOrdersCreateRuntimeIdentity::RunTest(
+	const FString& Parameters)
+{
+	UScenarioDefinition* Definition =
+		ScenarioOpeningOrderTests::MakeDefinition();
+	Definition->FollowUpOrders.Add(
+		ScenarioOpeningOrderTests::MakeFollowUpOrder());
+
+	TArray<FScenarioFollowUpOrder> FirstBuild;
+	TArray<FScenarioFollowUpOrder> SecondBuild;
+	FText Error;
+	TestTrue(TEXT("Valid Follow Up Order builds."),
+		Definition->BuildFollowUpOrders(FirstBuild, Error));
+	TestTrue(TEXT("The same Follow Up template builds for another Run."),
+		Definition->BuildFollowUpOrders(SecondBuild, Error));
+	if (FirstBuild.Num() != 1 || SecondBuild.Num() != 1)
+	{
+		return false;
+	}
+	TestTrue(TEXT("Follow Up Command receives a runtime identity."),
+		FirstBuild[0].Command.CommandId.IsValid());
+	TestTrue(TEXT("Each Run receives a new Follow Up identity."),
+		FirstBuild[0].Command.CommandId
+			!= SecondBuild[0].Command.CommandId);
+	TestEqual(TEXT("The authored Fact condition is preserved."),
+		FirstBuild[0].RequiredFacts[0].PredicateId,
+		FName(TEXT("AreaObserved")));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FScenarioFollowUpOrdersRejectInvalidConditions,
+	"Retry.Scenario.FollowUpOrders.RejectsInvalidConditions",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FScenarioFollowUpOrdersRejectInvalidConditions::RunTest(
+	const FString& Parameters)
+{
+	UScenarioDefinition* Definition =
+		ScenarioOpeningOrderTests::MakeDefinition();
+	FScenarioFollowUpOrder MissingCondition =
+		ScenarioOpeningOrderTests::MakeFollowUpOrder();
+	MissingCondition.RequiredFacts.Reset();
+	Definition->FollowUpOrders.Add(MissingCondition);
+
+	TArray<FScenarioFollowUpOrder> Orders;
+	FText Error;
+	TestFalse(TEXT("A Follow Up Order without a gate is rejected."),
+		Definition->BuildFollowUpOrders(Orders, Error));
+	TestTrue(TEXT("Rejected build remains empty."), Orders.IsEmpty());
+
+	Definition->FollowUpOrders.Reset();
+	FScenarioFollowUpOrder DuplicateCondition =
+		ScenarioOpeningOrderTests::MakeFollowUpOrder();
+	const FScenarioFactCondition RepeatedCondition =
+		DuplicateCondition.RequiredFacts[0];
+	DuplicateCondition.RequiredFacts.Add(RepeatedCondition);
+	Definition->FollowUpOrders.Add(DuplicateCondition);
+	TestFalse(TEXT("Duplicate Fact gates are rejected."),
+		Definition->BuildFollowUpOrders(Orders, Error));
+	TestTrue(TEXT("Definition validation includes Follow Up Orders."),
+		!Definition->IsDefinitionValid(Error));
+	return true;
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(

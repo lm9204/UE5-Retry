@@ -22,6 +22,13 @@ public:
 		const FGuid& CommandId,
 		const FInformationRequirement& Requirement) const;
 
+	bool HasReceivedFact(
+		uint8 TeamId,
+		const FGuid& RunId,
+		FName PredicateId,
+		FName SubjectId,
+		FName SourceGroupId = NAME_None) const;
+
 	TArray<FOperationalFact> GetFactsForTeam(uint8 TeamId) const;
 	TArray<FOperationalReport> GetReceivedReportsForTeam(uint8 TeamId) const;
 	void ResetOperationalMemory();

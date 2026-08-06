@@ -11,6 +11,7 @@
 #include "RetryNPCCharacter.h"
 #include "Scenario/ScenarioDefinition.h"
 #include "Scenario/ScenarioExecutionLogSubsystem.h"
+#include "Scenario/ScenarioFollowUpOrderEvaluator.h"
 #include "Scenario/ScenarioRuntimeSubsystem.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogScenarioInitializer, Log, All);
@@ -69,6 +70,13 @@ void AScenarioInitializer::BeginPlay()
 			FTimerDelegate::CreateUObject(
 				this, &AScenarioInitializer::StartOpeningOrders));
 	}
+}
+
+void AScenarioInitializer::EndPlay(
+	const EEndPlayReason::Type EndPlayReason)
+{
+	StopFollowUpOrderMonitoring();
+	Super::EndPlay(EndPlayReason);
 }
 
 void AScenarioInitializer::ValidateScenarioSetup()
@@ -368,16 +376,18 @@ void AScenarioInitializer::StartOpeningOrders()
 	}
 
 	TArray<FCommandIntent> Commands;
+	TArray<FScenarioFollowUpOrder> FollowUpOrders;
 	FText BuildError;
-	if (!Definition->BuildOpeningOrders(Commands, BuildError))
+	if (!Definition->BuildOpeningOrders(Commands, BuildError)
+		|| !Definition->BuildFollowUpOrders(FollowUpOrders, BuildError))
 	{
 		UE_LOG(LogScenarioInitializer, Error,
-			TEXT("[Scenario] Opening Orders are invalid: %s"),
+			TEXT("[Scenario] Scenario Orders are invalid: %s"),
 			*BuildError.ToString());
 		return;
 	}
 
-	if (Commands.IsEmpty())
+	if (Commands.IsEmpty() && FollowUpOrders.IsEmpty())
 	{
 		UE_LOG(LogScenarioInitializer, Display,
 			TEXT("[Scenario] Auto Start has no Opening Orders."));
@@ -408,37 +418,192 @@ void AScenarioInitializer::StartOpeningOrders()
 			continue;
 		}
 
-		AGroupManagerActor* Group = *GroupPtr;
-		const FCommandAssignmentResult Assignment =
-			Group->AssignCommandForRun(
-				Command, RunContext.RunId, ExecutionLog);
-		if (!Assignment.IsSuccess())
-		{
-			UE_LOG(LogScenarioInitializer, Error,
-				TEXT("[Scenario] Opening Order assignment failed for group '%s': %s"),
-				*Command.AssignedGroupId.ToString(),
-				*Assignment.Message.ToString());
-			continue;
-		}
-
-		const FGroupMissionDispatchResult Dispatch =
-			Group->DispatchCurrentReconMissionForRun(
-				RunContext.RunId, ExecutionLog);
-		if (!Dispatch.IsSuccess())
-		{
-			UE_LOG(LogScenarioInitializer, Error,
-				TEXT("[Scenario] Opening Order dispatch failed for group '%s': %s"),
-				*Command.AssignedGroupId.ToString(),
-				*Dispatch.Message.ToString());
-			continue;
-		}
-
-		UE_LOG(LogScenarioInitializer, Display,
-			TEXT("[Scenario] Opening Order executing. Group:%s Command:%s Recipients:%d"),
-			*Command.AssignedGroupId.ToString(),
-			*Command.CommandId.ToString(EGuidFormats::DigitsWithHyphens),
-			Dispatch.RecipientCount);
+		StartScenarioCommand(
+			Command, *GroupPtr, RunContext.RunId,
+			ExecutionLog, TEXT("Opening Order"));
 	}
+
+	BeginFollowUpOrderMonitoring(
+		MoveTemp(FollowUpOrders), RunContext.RunId);
+}
+
+bool AScenarioInitializer::StartScenarioCommand(
+	const FCommandIntent& Command,
+	AGroupManagerActor* Group,
+	const FGuid& RunId,
+	UScenarioExecutionLogSubsystem* ExecutionLog,
+	const TCHAR* OrderLabel)
+{
+	if (!IsValid(Group) || !ExecutionLog || !RunId.IsValid())
+	{
+		return false;
+	}
+
+	const FCommandAssignmentResult Assignment =
+		Group->AssignCommandForRun(Command, RunId, ExecutionLog);
+	if (!Assignment.IsSuccess())
+	{
+		UE_LOG(LogScenarioInitializer, Error,
+			TEXT("[Scenario] %s assignment failed for group '%s': %s"),
+			OrderLabel,
+			*Command.AssignedGroupId.ToString(),
+			*Assignment.Message.ToString());
+		return false;
+	}
+
+	const FGroupMissionDispatchResult Dispatch =
+		Group->DispatchCurrentMissionForRun(RunId, ExecutionLog);
+	if (!Dispatch.IsSuccess())
+	{
+		UE_LOG(LogScenarioInitializer, Error,
+			TEXT("[Scenario] %s dispatch failed for group '%s': %s"),
+			OrderLabel,
+			*Command.AssignedGroupId.ToString(),
+			*Dispatch.Message.ToString());
+		Group->CancelCurrentCommand(TEXT("ScenarioCommandDispatchFailed"));
+		Group->ClearCurrentCommand();
+		return false;
+	}
+
+	UE_LOG(LogScenarioInitializer, Display,
+		TEXT("[Scenario] %s executing. Group:%s Command:%s Recipients:%d"),
+		OrderLabel,
+		*Command.AssignedGroupId.ToString(),
+		*Command.CommandId.ToString(EGuidFormats::DigitsWithHyphens),
+		Dispatch.RecipientCount);
+	return true;
+}
+
+void AScenarioInitializer::BeginFollowUpOrderMonitoring(
+	TArray<FScenarioFollowUpOrder> Orders,
+	const FGuid& RunId)
+{
+	StopFollowUpOrderMonitoring();
+	if (Orders.IsEmpty() || !RunId.IsValid() || !GetWorld())
+	{
+		return;
+	}
+
+	PendingFollowUpOrders = MoveTemp(Orders);
+	FollowUpRunId = RunId;
+	GetWorldTimerManager().SetTimer(
+		FollowUpEvaluationTimer,
+		this,
+		&AScenarioInitializer::EvaluateFollowUpOrders,
+		0.2f,
+		true,
+		0.2f);
+	UE_LOG(LogScenarioInitializer, Display,
+		TEXT("[Scenario] Follow Up monitoring started. Run:%s Pending:%d"),
+		*RunId.ToString(EGuidFormats::DigitsWithHyphens),
+		PendingFollowUpOrders.Num());
+}
+
+void AScenarioInitializer::EvaluateFollowUpOrders()
+{
+	UGameInstance* GameInstance = GetGameInstance();
+	UScenarioRuntimeSubsystem* Runtime = GameInstance
+		? GameInstance->GetSubsystem<UScenarioRuntimeSubsystem>()
+		: nullptr;
+	const FScenarioRunContext RunContext = Runtime
+		? Runtime->GetCurrentRunContext()
+		: FScenarioRunContext();
+	if (!RunContext.IsValid() || RunContext.RunId != FollowUpRunId)
+	{
+		StopFollowUpOrderMonitoring();
+		return;
+	}
+
+	UTeamOperationalMemorySubsystem* TeamMemory = GetWorld()
+		? GetWorld()->GetSubsystem<UTeamOperationalMemorySubsystem>()
+		: nullptr;
+	UScenarioExecutionLogSubsystem* ExecutionLog = GameInstance
+		? GameInstance->GetSubsystem<UScenarioExecutionLogSubsystem>()
+		: nullptr;
+	if (!TeamMemory || !ExecutionLog)
+	{
+		return;
+	}
+
+	TArray<AActor*> GroupActors;
+	UGameplayStatics::GetAllActorsOfClass(
+		this, AGroupManagerActor::StaticClass(), GroupActors);
+	TMap<FName, AGroupManagerActor*> GroupsById;
+	for (AActor* Actor : GroupActors)
+	{
+		AGroupManagerActor* Group = CastChecked<AGroupManagerActor>(Actor);
+		GroupsById.Add(FName(*Group->GroupID.TrimStartAndEnd()), Group);
+	}
+
+	for (int32 Index = 0; Index < PendingFollowUpOrders.Num(); ++Index)
+	{
+		const FName GroupId =
+			PendingFollowUpOrders[Index].Command.AssignedGroupId;
+		if (!FScenarioFollowUpOrderEvaluator::IsFirstPendingForGroup(
+			PendingFollowUpOrders, Index))
+		{
+			continue;
+		}
+
+		AGroupManagerActor* const* GroupPtr = GroupsById.Find(GroupId);
+		if (!GroupPtr || !IsValid(*GroupPtr))
+		{
+			UE_LOG(LogScenarioInitializer, Error,
+				TEXT("[Scenario] Follow Up Order group '%s' was not found."),
+				*GroupId.ToString());
+			PendingFollowUpOrders.RemoveAt(Index--);
+			continue;
+		}
+
+		AGroupManagerActor* Group = *GroupPtr;
+		const EScenarioFollowUpReadiness Readiness =
+			FScenarioFollowUpOrderEvaluator::Evaluate(
+				PendingFollowUpOrders[Index], Group->TeamID,
+				FollowUpRunId, TeamMemory);
+		if (Readiness == EScenarioFollowUpReadiness::WaitingForFacts)
+		{
+			continue;
+		}
+		if (Readiness == EScenarioFollowUpReadiness::InvalidInput)
+		{
+			UE_LOG(LogScenarioInitializer, Error,
+				TEXT("[Scenario] Follow Up Order for group '%s' became invalid."),
+				*GroupId.ToString());
+			PendingFollowUpOrders.RemoveAt(Index--);
+			continue;
+		}
+
+		if (Group->HasCurrentCommand())
+		{
+			if (!IsCommandStatusTerminal(Group->GetCurrentCommand().Status)
+				|| !Group->ClearCurrentCommand())
+			{
+				continue;
+			}
+		}
+
+		const FCommandIntent Command =
+			PendingFollowUpOrders[Index].Command;
+		StartScenarioCommand(
+			Command, Group, FollowUpRunId,
+			ExecutionLog, TEXT("Follow Up Order"));
+		PendingFollowUpOrders.RemoveAt(Index--);
+	}
+
+	if (PendingFollowUpOrders.IsEmpty())
+	{
+		StopFollowUpOrderMonitoring();
+	}
+}
+
+void AScenarioInitializer::StopFollowUpOrderMonitoring()
+{
+	if (GetWorld())
+	{
+		GetWorldTimerManager().ClearTimer(FollowUpEvaluationTimer);
+	}
+	PendingFollowUpOrders.Reset();
+	FollowUpRunId.Invalidate();
 }
 
 #undef LOCTEXT_NAMESPACE

@@ -115,6 +115,24 @@ bool FTeamOperationalMemoryGatesFactsOnReceive::RunTest(
 		Received.Status, EOperationalReportStatus::Received);
 	TestTrue(TEXT("Received Fact satisfies the requirement."),
 		Memory->HasReceivedRequirement(1, RunId, CommandId, Requirement));
+	TestTrue(TEXT("A received Fact can gate a later command."),
+		Memory->HasReceivedFact(
+			1, RunId, TEXT("AreaObserved"), TEXT("ReconArea_A")));
+	TestTrue(TEXT("An optional source group can match."),
+		Memory->HasReceivedFact(
+			1, RunId, TEXT("AreaObserved"),
+			TEXT("ReconArea_A"), TEXT("A")));
+	TestFalse(TEXT("Another team cannot consume the Fact."),
+		Memory->HasReceivedFact(
+			2, RunId, TEXT("AreaObserved"), TEXT("ReconArea_A")));
+	TestFalse(TEXT("Another Run cannot consume the Fact."),
+		Memory->HasReceivedFact(
+			1, FGuid::NewGuid(),
+			TEXT("AreaObserved"), TEXT("ReconArea_A")));
+	TestFalse(TEXT("A mismatched source group cannot satisfy the gate."),
+		Memory->HasReceivedFact(
+			1, RunId, TEXT("AreaObserved"),
+			TEXT("ReconArea_A"), TEXT("B")));
 	return true;
 }
 

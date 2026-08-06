@@ -2,10 +2,12 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "Scenario/ScenarioDefinition.h"
 #include "Scenario/ScenarioTypes.h"
 #include "ScenarioInitializer.generated.h"
 
-class UScenarioDefinition;
+class AGroupManagerActor;
+class UScenarioExecutionLogSubsystem;
 
 /**
  * Validates a scenario level and applies per-run state when the level is entered
@@ -34,6 +36,7 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 private:
 	EScenarioInitializationResult ValidateSetup(
@@ -41,4 +44,21 @@ private:
 	bool ValidatePlacedActors(FText& OutMessage) const;
 	void ResetRuntimeState() const;
 	void StartOpeningOrders();
+	bool StartScenarioCommand(
+		const FCommandIntent& Command,
+		AGroupManagerActor* Group,
+		const FGuid& RunId,
+		UScenarioExecutionLogSubsystem* ExecutionLog,
+		const TCHAR* OrderLabel);
+	void BeginFollowUpOrderMonitoring(
+		TArray<FScenarioFollowUpOrder> Orders,
+		const FGuid& RunId);
+	void EvaluateFollowUpOrders();
+	void StopFollowUpOrderMonitoring();
+
+	UPROPERTY(Transient)
+	TArray<FScenarioFollowUpOrder> PendingFollowUpOrders;
+
+	FGuid FollowUpRunId;
+	FTimerHandle FollowUpEvaluationTimer;
 };

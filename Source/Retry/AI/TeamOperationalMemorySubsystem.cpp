@@ -101,6 +101,32 @@ bool UTeamOperationalMemorySubsystem::HasReceivedRequirement(
 		});
 }
 
+bool UTeamOperationalMemorySubsystem::HasReceivedFact(
+	const uint8 TeamId,
+	const FGuid& RunId,
+	const FName PredicateId,
+	const FName SubjectId,
+	const FName SourceGroupId) const
+{
+	const TArray<FOperationalFact>* TeamFacts = FactsByTeam.Find(TeamId);
+	if (!TeamFacts || !RunId.IsValid()
+		|| PredicateId.IsNone() || SubjectId.IsNone())
+	{
+		return false;
+	}
+
+	return TeamFacts->ContainsByPredicate(
+		[&RunId, PredicateId, SubjectId, SourceGroupId](
+			const FOperationalFact& Fact)
+		{
+			return Fact.RunId == RunId
+				&& Fact.PredicateId == PredicateId
+				&& Fact.SubjectId == SubjectId
+				&& (SourceGroupId.IsNone()
+					|| Fact.SourceGroupId == SourceGroupId);
+		});
+}
+
 TArray<FOperationalFact>
 UTeamOperationalMemorySubsystem::GetFactsForTeam(const uint8 TeamId) const
 {
