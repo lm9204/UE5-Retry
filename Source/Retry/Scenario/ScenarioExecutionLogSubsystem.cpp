@@ -56,12 +56,13 @@ FGuid UScenarioExecutionLogSubsystem::RecordCommandEvent(
 	const FName ResultCode,
 	const FString& Message)
 {
+	const bool bSupportedCommandEvent =
+		EventType == EScenarioExecutionEventType::CommandValidated
+		|| EventType == EScenarioExecutionEventType::CommandValidationRejected;
 	if (!ActiveRunLog.bIsActive
 		|| ActiveRunLog.RunId != RunId
 		|| !CommandId.IsValid()
-		|| EventType == EScenarioExecutionEventType::RunStarted
-		|| EventType == EScenarioExecutionEventType::RunEnded
-		|| EventType == EScenarioExecutionEventType::CommandStatusChanged)
+		|| !bSupportedCommandEvent)
 	{
 		return FGuid();
 	}
@@ -106,6 +107,41 @@ FGuid UScenarioExecutionLogSubsystem::RecordCommandStatusTransition(
 		return FGuid();
 	}
 
+	return AddEvent(MoveTemp(Event));
+}
+
+FGuid UScenarioExecutionLogSubsystem::RecordOperationalEvent(
+	const FGuid& RunId,
+	const FGuid& CommandId,
+	const FName GroupId,
+	const EScenarioExecutionEventType EventType,
+	const FGuid& FactId,
+	const FGuid& ReportId,
+	const FName ResultCode,
+	const FString& Message)
+{
+	const bool bFactEvent =
+		EventType == EScenarioExecutionEventType::OperationalFactObserved;
+	const bool bReportEvent =
+		EventType == EScenarioExecutionEventType::OperationalReportCreated
+		|| EventType == EScenarioExecutionEventType::OperationalReportReceived;
+	if (!IsRecordingRun(RunId)
+		|| !CommandId.IsValid()
+		|| (!bFactEvent && !bReportEvent)
+		|| (bFactEvent && (!FactId.IsValid() || !ReportId.IsValid()))
+		|| (bReportEvent && !ReportId.IsValid()))
+	{
+		return FGuid();
+	}
+
+	FScenarioExecutionEvent Event;
+	Event.CommandId = CommandId;
+	Event.FactId = FactId;
+	Event.ReportId = ReportId;
+	Event.GroupId = GroupId;
+	Event.EventType = EventType;
+	Event.ResultCode = ResultCode;
+	Event.Message = Message;
 	return AddEvent(MoveTemp(Event));
 }
 

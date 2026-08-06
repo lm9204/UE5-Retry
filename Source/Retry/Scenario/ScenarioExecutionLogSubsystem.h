@@ -14,6 +14,9 @@ enum class EScenarioExecutionEventType : uint8
 	CommandValidated,
 	CommandValidationRejected,
 	CommandStatusChanged,
+	OperationalFactObserved,
+	OperationalReportCreated,
+	OperationalReportReceived,
 };
 
 UENUM(BlueprintType)
@@ -39,6 +42,12 @@ struct FScenarioExecutionEvent
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Scenario|Log")
 	FGuid CommandId;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Scenario|Log")
+	FGuid FactId;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Scenario|Log")
+	FGuid ReportId;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Scenario|Log")
 	int64 SequenceNumber = 0;
@@ -125,6 +134,16 @@ public:
 		FName GroupId,
 		ECommandStatus PreviousStatus,
 		ECommandStatus NewStatus,
+		FName ResultCode,
+		const FString& Message);
+
+	FGuid RecordOperationalEvent(
+		const FGuid& RunId,
+		const FGuid& CommandId,
+		FName GroupId,
+		EScenarioExecutionEventType EventType,
+		const FGuid& FactId,
+		const FGuid& ReportId,
 		FName ResultCode,
 		const FString& Message);
 

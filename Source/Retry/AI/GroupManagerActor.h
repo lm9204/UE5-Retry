@@ -8,6 +8,32 @@
 #include "GroupManagerActor.generated.h"
 
 class UScenarioExecutionLogSubsystem;
+class UNPCDecisionComponent;
+
+enum class EGroupMissionDispatchOutcome : uint8
+{
+	Dispatched,
+	NoAssignedCommand,
+	InvalidCommandState,
+	LeaderUnavailable,
+	WorldResolutionFailed,
+	RecipientUnavailable,
+	MissionRejected,
+	StatusTransitionFailed,
+};
+
+struct FGroupMissionDispatchResult
+{
+	EGroupMissionDispatchOutcome Outcome =
+		EGroupMissionDispatchOutcome::NoAssignedCommand;
+	int32 RecipientCount = 0;
+	FText Message;
+
+	bool IsSuccess() const
+	{
+		return Outcome == EGroupMissionDispatchOutcome::Dispatched;
+	}
+};
 
 UENUM(BlueprintType)
 enum class ECommandAssignmentOutcome : uint8
@@ -50,6 +76,7 @@ class RETRY_API AGroupManagerActor : public AActor
 
 public:
 	AGroupManagerActor();
+	virtual void Tick(float DeltaSeconds) override;
 
 	UPROPERTY(EditAnywhere, Category="Group")
 	FString GroupID;
@@ -112,16 +139,40 @@ public:
 		const FGuid& RunId,
 		UScenarioExecutionLogSubsystem* ExecutionLog);
 
+	UFUNCTION(BlueprintCallable, Category="Group|Mission")
+	bool DispatchCurrentReconMission();
+
+	FGroupMissionDispatchResult DispatchCurrentReconMissionForRun(
+		const FGuid& RunId,
+		UScenarioExecutionLogSubsystem* ExecutionLog);
+
+	FGroupMissionDispatchResult DispatchResolvedMissionForRun(
+		const FMissionContext& Mission,
+		const TArray<UNPCDecisionComponent*>& Recipients,
+		const FGuid& RunId,
+		UScenarioExecutionLogSubsystem* ExecutionLog);
+
 	UFUNCTION(BlueprintCallable, Category="Group")
 	void ResetGroupRuntimeState();
 
 	UPROPERTY(EditAnywhere, Category="Group")
 	float GroupEmotionThreshold = 0.5f;
 
+	UPROPERTY(EditAnywhere, Category="Group|Mission", meta=(ClampMin="1.0"))
+	float ReconObservationArrivalRadius = 150.f;
+
 	FString BuildGroupLLMPrompt() const;
 
 private:
 	FName GetCommandGroupId() const;
+	void ClearMissionForAllMembers();
+	void BeginReconMonitoring(
+		const FMissionContext& Mission,
+		const FGuid& RunId,
+		UScenarioExecutionLogSubsystem* ExecutionLog);
+	void UpdateReconExecution();
+	bool SubmitReconReportAndComplete(double ObservedAtSeconds);
+	void StopReconMonitoring();
 	void ForceClearCurrentCommand();
 
 	TArray<FGroupMemoryEvent> GroupMemories;
@@ -132,4 +183,12 @@ private:
 
 	UPROPERTY(Transient)
 	bool bHasCurrentCommand = false;
+
+	TArray<TWeakObjectPtr<UNPCDecisionComponent>> ActiveMissionRecipients;
+	FMissionContext ActiveReconMission;
+	FGuid ActiveReconRunId;
+	TWeakObjectPtr<UScenarioExecutionLogSubsystem> ActiveReconExecutionLog;
+	double ReconExecutionStartedAtSeconds = 0.0;
+	double ReconObservationStartedAtSeconds = -1.0;
+	bool bReconMonitoringActive = false;
 };

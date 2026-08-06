@@ -142,6 +142,11 @@ void ARetryNPCCharacter::BeginPlay()
 
 void ARetryNPCCharacter::OnDeath()
 {
+	if (bIsGroupLeader && IsValid(MyGroup))
+	{
+		MyGroup->OnLeaderDied();
+	}
+
 	// BT 중단
 	if (AAIController* AIC = Cast<AAIController>(GetController()))
 	{
