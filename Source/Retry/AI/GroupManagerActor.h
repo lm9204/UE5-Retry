@@ -9,6 +9,7 @@
 
 class UScenarioExecutionLogSubsystem;
 class UNPCDecisionComponent;
+struct FOperationalReport;
 
 enum class EGroupMissionDispatchOutcome : uint8
 {
@@ -146,11 +147,16 @@ public:
 		const FGuid& RunId,
 		UScenarioExecutionLogSubsystem* ExecutionLog);
 
+	FGroupMissionDispatchResult DispatchCurrentMissionForRun(
+		const FGuid& RunId,
+		UScenarioExecutionLogSubsystem* ExecutionLog);
+
 	FGroupMissionDispatchResult DispatchResolvedMissionForRun(
 		const FMissionContext& Mission,
 		const TArray<UNPCDecisionComponent*>& Recipients,
 		const FGuid& RunId,
-		UScenarioExecutionLogSubsystem* ExecutionLog);
+		UScenarioExecutionLogSubsystem* ExecutionLog,
+		float ObjectiveAreaRadius = 0.f);
 
 	UFUNCTION(BlueprintCallable, Category="Group")
 	void ResetGroupRuntimeState();
@@ -173,6 +179,22 @@ private:
 	void UpdateReconExecution();
 	bool SubmitReconReportAndComplete(double ObservedAtSeconds);
 	void StopReconMonitoring();
+	void BeginSecureMonitoring(
+		const FMissionContext& Mission,
+		float AreaRadius,
+		const FGuid& RunId,
+		UScenarioExecutionLogSubsystem* ExecutionLog);
+	void UpdateSecureExecution();
+	bool SubmitSecureReportAndComplete(double SecuredAtSeconds);
+	bool SubmitBuiltReportAndComplete(
+		FOperationalReport& Report,
+		const FGuid& RunId,
+		UScenarioExecutionLogSubsystem* ExecutionLog,
+		FName FactResultCode,
+		FName CreatedResultCode,
+		FName ReceivedResultCode,
+		const FString& OperationLabel);
+	void StopSecureMonitoring();
 	void ForceClearCurrentCommand();
 
 	TArray<FGroupMemoryEvent> GroupMemories;
@@ -191,4 +213,11 @@ private:
 	double ReconExecutionStartedAtSeconds = 0.0;
 	double ReconObservationStartedAtSeconds = -1.0;
 	bool bReconMonitoringActive = false;
+	FMissionContext ActiveSecureMission;
+	FGuid ActiveSecureRunId;
+	TWeakObjectPtr<UScenarioExecutionLogSubsystem> ActiveSecureExecutionLog;
+	float ActiveSecureAreaRadius = 0.f;
+	double SecureExecutionStartedAtSeconds = 0.0;
+	double SecureControlStartedAtSeconds = -1.0;
+	bool bSecureMonitoringActive = false;
 };

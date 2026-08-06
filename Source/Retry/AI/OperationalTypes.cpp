@@ -5,6 +5,97 @@
 namespace OperationalPredicates
 {
 	const FName AreaObserved = TEXT("AreaObserved");
+	const FName AreaSecured = TEXT("AreaSecured");
+
+	bool BuildAreaReport(
+		const FCommandIntent& Command,
+		const FMissionContext& Mission,
+		const FGuid& RunId,
+		const uint8 TeamId,
+		const FName SourceGroupId,
+		const double EventAtSeconds,
+		const ECommandVerb ExpectedVerb,
+		const FName SupportedPredicate,
+		FOperationalReport& OutReport,
+		FText& OutError)
+	{
+		OutReport = FOperationalReport();
+		if (Command.Status != ECommandStatus::Executing
+			|| Command.Verb != ExpectedVerb
+			|| Command.TargetType != ECommandTargetType::Area
+			|| !Command.CommandId.IsValid()
+			|| Command.TargetId.IsNone()
+			|| Command.CommandId != Mission.CommandId
+			|| !RunId.IsValid()
+			|| SourceGroupId.IsNone()
+			|| Mission.ObjectiveId.IsNone()
+			|| Mission.ObjectiveLocation.ContainsNaN()
+			|| !FMath::IsFinite(EventAtSeconds)
+			|| EventAtSeconds < 0.0)
+		{
+			OutError = LOCTEXT(
+				"InvalidAreaReportInput",
+				"An executing Area command, matching Mission, Run, and source are required.");
+			return false;
+		}
+
+		OutReport.ReportId = FGuid::NewGuid();
+		OutReport.RunId = RunId;
+		OutReport.CommandId = Command.CommandId;
+		OutReport.TeamId = TeamId;
+		OutReport.SourceGroupId = SourceGroupId;
+		OutReport.Status = EOperationalReportStatus::Created;
+		OutReport.CreatedAtSeconds = EventAtSeconds;
+
+		const auto AddFact = [&OutReport, &Mission, EventAtSeconds](
+			const FName PredicateId,
+			const FName SubjectId)
+		{
+			FOperationalFact& Fact = OutReport.Facts.AddDefaulted_GetRef();
+			Fact.FactId = FGuid::NewGuid();
+			Fact.RunId = OutReport.RunId;
+			Fact.CommandId = OutReport.CommandId;
+			Fact.TeamId = OutReport.TeamId;
+			Fact.SourceGroupId = OutReport.SourceGroupId;
+			Fact.PredicateId = PredicateId;
+			Fact.SubjectId = SubjectId;
+			Fact.Location = Mission.ObjectiveLocation;
+			Fact.ObservedAtSeconds = EventAtSeconds;
+		};
+
+		for (const FInformationRequirement& Requirement
+			: Command.InformationRequirements)
+		{
+			if (Requirement.RequirementId != SupportedPredicate)
+			{
+				OutReport = FOperationalReport();
+				OutError = FText::Format(
+					LOCTEXT(
+						"UnsupportedAreaRequirement",
+						"This command does not have an evaluator for requirement '{0}'."),
+					FText::FromName(Requirement.RequirementId));
+				return false;
+			}
+			AddFact(Requirement.RequirementId, Requirement.SubjectId);
+		}
+
+		if (OutReport.Facts.IsEmpty())
+		{
+			AddFact(SupportedPredicate, Command.TargetId);
+		}
+
+		if (!OutReport.IsValid())
+		{
+			OutReport = FOperationalReport();
+			OutError = LOCTEXT(
+				"InvalidBuiltAreaReport",
+				"The generated operational report is invalid.");
+			return false;
+		}
+
+		OutError = FText::GetEmpty();
+		return true;
+	}
 }
 
 bool FOperationalFact::IsValid() const
@@ -60,82 +151,26 @@ bool BuildReconOperationalReport(
 	FOperationalReport& OutReport,
 	FText& OutError)
 {
-	OutReport = FOperationalReport();
-	if (Command.Status != ECommandStatus::Executing
-		|| Command.Verb != ECommandVerb::Recon
-		|| Command.TargetType != ECommandTargetType::Area
-		|| !Command.CommandId.IsValid()
-		|| Command.TargetId.IsNone()
-		|| Command.CommandId != Mission.CommandId
-		|| !RunId.IsValid()
-		|| SourceGroupId.IsNone()
-		|| Mission.ObjectiveId.IsNone()
-		|| Mission.ObjectiveLocation.ContainsNaN()
-		|| !FMath::IsFinite(ObservedAtSeconds)
-		|| ObservedAtSeconds < 0.0)
-	{
-		OutError = LOCTEXT(
-			"InvalidReconReportInput",
-			"An executing Recon command, matching Mission, Run, and source are required.");
-		return false;
-	}
+	return OperationalPredicates::BuildAreaReport(
+		Command, Mission, RunId, TeamId, SourceGroupId,
+		ObservedAtSeconds, ECommandVerb::Recon,
+		OperationalPredicates::AreaObserved, OutReport, OutError);
+}
 
-	OutReport.ReportId = FGuid::NewGuid();
-	OutReport.RunId = RunId;
-	OutReport.CommandId = Command.CommandId;
-	OutReport.TeamId = TeamId;
-	OutReport.SourceGroupId = SourceGroupId;
-	OutReport.Status = EOperationalReportStatus::Created;
-	OutReport.CreatedAtSeconds = ObservedAtSeconds;
-
-	const auto AddFact = [&OutReport, &Mission, ObservedAtSeconds](
-		const FName PredicateId,
-		const FName SubjectId)
-	{
-		FOperationalFact& Fact = OutReport.Facts.AddDefaulted_GetRef();
-		Fact.FactId = FGuid::NewGuid();
-		Fact.RunId = OutReport.RunId;
-		Fact.CommandId = OutReport.CommandId;
-		Fact.TeamId = OutReport.TeamId;
-		Fact.SourceGroupId = OutReport.SourceGroupId;
-		Fact.PredicateId = PredicateId;
-		Fact.SubjectId = SubjectId;
-		Fact.Location = Mission.ObjectiveLocation;
-		Fact.ObservedAtSeconds = ObservedAtSeconds;
-	};
-
-	for (const FInformationRequirement& Requirement
-		: Command.InformationRequirements)
-	{
-		if (Requirement.RequirementId != OperationalPredicates::AreaObserved)
-		{
-			OutReport = FOperationalReport();
-			OutError = FText::Format(
-				LOCTEXT(
-					"UnsupportedReconRequirement",
-					"Recon does not yet have an evaluator for requirement '{0}'."),
-				FText::FromName(Requirement.RequirementId));
-			return false;
-		}
-		AddFact(Requirement.RequirementId, Requirement.SubjectId);
-	}
-
-	if (OutReport.Facts.IsEmpty())
-	{
-		AddFact(OperationalPredicates::AreaObserved, Command.TargetId);
-	}
-
-	if (!OutReport.IsValid())
-	{
-		OutReport = FOperationalReport();
-		OutError = LOCTEXT(
-			"InvalidBuiltReconReport",
-			"The generated Recon report is invalid.");
-		return false;
-	}
-
-	OutError = FText::GetEmpty();
-	return true;
+bool BuildSecureAreaOperationalReport(
+	const FCommandIntent& Command,
+	const FMissionContext& Mission,
+	const FGuid& RunId,
+	const uint8 TeamId,
+	const FName SourceGroupId,
+	const double SecuredAtSeconds,
+	FOperationalReport& OutReport,
+	FText& OutError)
+{
+	return OperationalPredicates::BuildAreaReport(
+		Command, Mission, RunId, TeamId, SourceGroupId,
+		SecuredAtSeconds, ECommandVerb::Secure,
+		OperationalPredicates::AreaSecured, OutReport, OutError);
 }
 
 #undef LOCTEXT_NAMESPACE

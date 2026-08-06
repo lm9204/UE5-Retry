@@ -1,5 +1,27 @@
 #include "AI/MissionResolver.h"
 
+namespace MissionResolver
+{
+	void CopyMissionInputs(
+		const FCommandIntent& Command,
+		FMissionContext& Mission)
+	{
+		Mission.CommandId = Command.CommandId;
+		Mission.InformationRequirements = Command.InformationRequirements;
+		for (const FCommandConstraint& Constraint : Command.Constraints)
+		{
+			if (Constraint.bIsHardConstraint)
+			{
+				Mission.HardConstraints.Add(Constraint);
+			}
+			else
+			{
+				Mission.SoftConstraints.Add(Constraint);
+			}
+		}
+	}
+}
+
 FMissionResolutionResult FMissionResolver::ResolveReconArea(
 	const FCommandIntent& Command,
 	const FName ResolvedObjectiveId,
@@ -42,25 +64,50 @@ FMissionResolutionResult FMissionResolver::ResolveReconArea(
 		return Result;
 	}
 
-	Result.Mission.CommandId = Command.CommandId;
+	MissionResolver::CopyMissionInputs(Command, Result.Mission);
 	Result.Mission.ObjectiveId = Selection.SelectedCandidate.PointId;
 	Result.Mission.ObjectiveLocation =
 		Selection.SelectedCandidate.Location;
-	Result.Mission.InformationRequirements =
-		Command.InformationRequirements;
 
-	for (const FCommandConstraint& Constraint : Command.Constraints)
+	Result.Outcome = EMissionResolutionOutcome::Resolved;
+	return Result;
+}
+
+FMissionResolutionResult FMissionResolver::ResolveSecureArea(
+	const FCommandIntent& Command,
+	const FName ResolvedObjectiveId,
+	const FVector ResolvedObjectiveLocation)
+{
+	FMissionResolutionResult Result;
+	if (!Command.CommandId.IsValid() || Command.TargetId.IsNone()
+		|| ResolvedObjectiveLocation.ContainsNaN())
 	{
-		if (Constraint.bIsHardConstraint)
-		{
-			Result.Mission.HardConstraints.Add(Constraint);
-		}
-		else
-		{
-			Result.Mission.SoftConstraints.Add(Constraint);
-		}
+		return Result;
 	}
 
+	if (Command.Status != ECommandStatus::Assigned)
+	{
+		Result.Outcome = EMissionResolutionOutcome::InvalidCommandState;
+		return Result;
+	}
+
+	if (Command.Verb != ECommandVerb::Secure
+		|| Command.TargetType != ECommandTargetType::Area)
+	{
+		Result.Outcome = EMissionResolutionOutcome::UnsupportedCommand;
+		return Result;
+	}
+
+	if (ResolvedObjectiveId.IsNone()
+		|| ResolvedObjectiveId != Command.TargetId)
+	{
+		Result.Outcome = EMissionResolutionOutcome::ObjectiveMismatch;
+		return Result;
+	}
+
+	MissionResolver::CopyMissionInputs(Command, Result.Mission);
+	Result.Mission.ObjectiveId = ResolvedObjectiveId;
+	Result.Mission.ObjectiveLocation = ResolvedObjectiveLocation;
 	Result.Outcome = EMissionResolutionOutcome::Resolved;
 	return Result;
 }

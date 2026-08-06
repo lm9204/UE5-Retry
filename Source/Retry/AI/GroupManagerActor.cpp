@@ -1,13 +1,18 @@
 ﻿#include "GroupManagerActor.h"
 
 #include "AIController.h"
+#include "AI/AreaControlEvaluator.h"
 #include "AI/CommandExecutionMonitor.h"
 #include "AI/OperationalTypes.h"
 #include "AI/ReconMissionWorldAdapter.h"
+#include "AI/SecureAreaWorldAdapter.h"
 #include "AI/TeamOperationalMemorySubsystem.h"
+#include "EngineUtils.h"
 #include "Engine/GameInstance.h"
 #include "Engine/World.h"
+#include "GenericTeamAgentInterface.h"
 #include "LLMRequestQueue.h"
+#include "RetryCharacter.h"
 #include "RetryNPCCharacter.h"
 #include "Components/HealthComponent.h"
 #include "Components/CapsuleComponent.h"
@@ -84,6 +89,7 @@ void AGroupManagerActor::Tick(const float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 	UpdateReconExecution();
+	UpdateSecureExecution();
 }
 
 // ────────────────────────────────────────────────────
@@ -440,6 +446,23 @@ AGroupManagerActor::DispatchCurrentReconMissionForRun(
 {
 	if (!bHasCurrentCommand)
 	{
+		return DispatchCurrentMissionForRun(RunId, ExecutionLog);
+	}
+	if (CurrentCommand.Verb != ECommandVerb::Recon)
+	{
+		return GroupCommand::MakeDispatchResult(
+			EGroupMissionDispatchOutcome::InvalidCommandState,
+			TEXT("The current command is not a Recon mission."));
+	}
+	return DispatchCurrentMissionForRun(RunId, ExecutionLog);
+}
+
+FGroupMissionDispatchResult AGroupManagerActor::DispatchCurrentMissionForRun(
+	const FGuid& RunId,
+	UScenarioExecutionLogSubsystem* ExecutionLog)
+{
+	if (!bHasCurrentCommand)
+	{
 		return GroupCommand::MakeDispatchResult(
 			EGroupMissionDispatchOutcome::NoAssignedCommand,
 			TEXT("The group has no assigned command to dispatch."));
@@ -519,32 +542,61 @@ AGroupManagerActor::DispatchCurrentReconMissionForRun(
 			TEXT("The living leader is not registered as a group member."));
 	}
 
-	const FReconMissionWorldResult WorldResult =
-		FReconMissionWorldAdapter::Resolve(
-			GetWorld(),
-			CurrentCommand,
-			Leader->GetActorLocation(),
-			Leader);
-	if (!WorldResult.IsSuccess())
+	FMissionContext Mission;
+	float ObjectiveAreaRadius = 0.f;
+	if (CurrentCommand.Verb == ECommandVerb::Recon)
+	{
+		const FReconMissionWorldResult WorldResult =
+			FReconMissionWorldAdapter::Resolve(
+				GetWorld(), CurrentCommand,
+				Leader->GetActorLocation(), Leader);
+		if (!WorldResult.IsSuccess())
+		{
+			return GroupCommand::MakeDispatchResult(
+				EGroupMissionDispatchOutcome::WorldResolutionFailed,
+				TEXT("The assigned Recon mission could not be resolved in the World."),
+				Recipients.Num());
+		}
+		Mission = WorldResult.Resolution.Mission;
+		UE_LOG(LogTemp, Display,
+			TEXT("[Group:%s] Recon Mission resolved. Observation:%s Location:%s Candidates:%d"),
+			*GroupID,
+			*Mission.ObjectiveId.ToString(),
+			*Mission.ObjectiveLocation.ToCompactString(),
+			WorldResult.CandidateCount);
+	}
+	else if (CurrentCommand.Verb == ECommandVerb::Secure)
+	{
+		const FSecureAreaWorldResult WorldResult =
+			FSecureAreaWorldAdapter::Resolve(
+				GetWorld(), CurrentCommand,
+				Leader->GetActorLocation(), Leader);
+		if (!WorldResult.IsSuccess())
+		{
+			return GroupCommand::MakeDispatchResult(
+				EGroupMissionDispatchOutcome::WorldResolutionFailed,
+				TEXT("The assigned Secure Area mission could not be resolved in the World."),
+				Recipients.Num());
+		}
+		Mission = WorldResult.Resolution.Mission;
+		ObjectiveAreaRadius = WorldResult.AreaRadius;
+		UE_LOG(LogTemp, Display,
+			TEXT("[Group:%s] Secure Mission resolved. Area:%s Location:%s Radius:%.1f"),
+			*GroupID,
+			*Mission.ObjectiveId.ToString(),
+			*Mission.ObjectiveLocation.ToCompactString(),
+			ObjectiveAreaRadius);
+	}
+	else
 	{
 		return GroupCommand::MakeDispatchResult(
 			EGroupMissionDispatchOutcome::WorldResolutionFailed,
-			TEXT("The assigned Recon mission could not be resolved in the World."),
+			TEXT("The current command has no Mission World resolver."),
 			Recipients.Num());
 	}
 
-	UE_LOG(LogTemp, Display,
-		TEXT("[Group:%s] Recon Mission resolved. Observation:%s Location:%s Candidates:%d"),
-		*GroupID,
-		*WorldResult.Resolution.Mission.ObjectiveId.ToString(),
-		*WorldResult.Resolution.Mission.ObjectiveLocation.ToCompactString(),
-		WorldResult.CandidateCount);
-
 	return DispatchResolvedMissionForRun(
-		WorldResult.Resolution.Mission,
-		Recipients,
-		RunId,
-		ExecutionLog);
+		Mission, Recipients, RunId, ExecutionLog, ObjectiveAreaRadius);
 }
 
 FGroupMissionDispatchResult
@@ -552,7 +604,8 @@ AGroupManagerActor::DispatchResolvedMissionForRun(
 	const FMissionContext& Mission,
 	const TArray<UNPCDecisionComponent*>& Recipients,
 	const FGuid& RunId,
-	UScenarioExecutionLogSubsystem* ExecutionLog)
+	UScenarioExecutionLogSubsystem* ExecutionLog,
+	const float ObjectiveAreaRadius)
 {
 	if (!bHasCurrentCommand)
 	{
@@ -567,6 +620,15 @@ AGroupManagerActor::DispatchResolvedMissionForRun(
 		return GroupCommand::MakeDispatchResult(
 			EGroupMissionDispatchOutcome::InvalidCommandState,
 			TEXT("The Mission does not match the current Assigned command."));
+	}
+
+	if (CurrentCommand.Verb == ECommandVerb::Secure
+		&& (!FMath::IsFinite(ObjectiveAreaRadius)
+			|| ObjectiveAreaRadius <= 0.f))
+	{
+		return GroupCommand::MakeDispatchResult(
+			EGroupMissionDispatchOutcome::MissionRejected,
+			TEXT("A Secure Area Mission requires a finite positive Area radius."));
 	}
 
 	if (Recipients.IsEmpty())
@@ -651,7 +713,15 @@ AGroupManagerActor::DispatchResolvedMissionForRun(
 	{
 		ActiveMissionRecipients.Add(Snapshot.Decision);
 	}
-	BeginReconMonitoring(Mission, RunId, ExecutionLog);
+	if (CurrentCommand.Verb == ECommandVerb::Recon)
+	{
+		BeginReconMonitoring(Mission, RunId, ExecutionLog);
+	}
+	else if (CurrentCommand.Verb == ECommandVerb::Secure)
+	{
+		BeginSecureMonitoring(
+			Mission, ObjectiveAreaRadius, RunId, ExecutionLog);
+	}
 
 	return GroupCommand::MakeDispatchResult(
 		EGroupMissionDispatchOutcome::Dispatched,
@@ -745,6 +815,7 @@ void AGroupManagerActor::ClearMissionForAllMembers()
 	}
 
 	StopReconMonitoring();
+	StopSecureMonitoring();
 }
 
 void AGroupManagerActor::BeginReconMonitoring(
@@ -888,12 +959,8 @@ bool AGroupManagerActor::SubmitReconReportAndComplete(
 {
 	UScenarioExecutionLogSubsystem* ExecutionLog =
 		ActiveReconExecutionLog.Get();
-	UTeamOperationalMemorySubsystem* TeamMemory = GetWorld()
-		? GetWorld()->GetSubsystem<UTeamOperationalMemorySubsystem>()
-		: nullptr;
 	if (!ExecutionLog
-		|| !ExecutionLog->IsRecordingRun(ActiveReconRunId)
-		|| !TeamMemory)
+		|| !ExecutionLog->IsRecordingRun(ActiveReconRunId))
 	{
 		return false;
 	}
@@ -923,36 +990,66 @@ bool AGroupManagerActor::SubmitReconReportAndComplete(
 		return false;
 	}
 
+	return SubmitBuiltReportAndComplete(
+		Report,
+		ActiveReconRunId,
+		ExecutionLog,
+		TEXT("ReconObservation"),
+		TEXT("ReconReportCreated"),
+		TEXT("ReconReportReceived"),
+		TEXT("Recon"));
+}
+
+bool AGroupManagerActor::SubmitBuiltReportAndComplete(
+	FOperationalReport& Report,
+	const FGuid& RunId,
+	UScenarioExecutionLogSubsystem* ExecutionLog,
+	const FName FactResultCode,
+	const FName CreatedResultCode,
+	const FName ReceivedResultCode,
+	const FString& OperationLabel)
+{
 	for (const FOperationalFact& Fact : Report.Facts)
 	{
 		if (!ExecutionLog->RecordOperationalEvent(
-			ActiveReconRunId,
+			RunId,
 			CurrentCommand.CommandId,
 			GetCommandGroupId(),
 			EScenarioExecutionEventType::OperationalFactObserved,
 			Fact.FactId,
 			Report.ReportId,
-			TEXT("ReconObservation"),
-			TEXT("A Recon information requirement was observed.")).IsValid())
+			FactResultCode,
+			FString::Printf(TEXT("A %s operational Fact was confirmed."),
+				*OperationLabel)).IsValid())
 		{
 			return false;
 		}
 	}
 
 	if (!ExecutionLog->RecordOperationalEvent(
-		ActiveReconRunId,
+		RunId,
 		CurrentCommand.CommandId,
 		GetCommandGroupId(),
 		EScenarioExecutionEventType::OperationalReportCreated,
 		FGuid(),
 		Report.ReportId,
-		TEXT("ReconReportCreated"),
-		TEXT("A Recon report was created.")).IsValid())
+		CreatedResultCode,
+		FString::Printf(TEXT("A %s report was created."),
+			*OperationLabel)).IsValid())
+	{
+		return false;
+	}
+
+	UTeamOperationalMemorySubsystem* TeamMemory = GetWorld()
+		? GetWorld()->GetSubsystem<UTeamOperationalMemorySubsystem>()
+		: nullptr;
+	if (!TeamMemory)
 	{
 		return false;
 	}
 
 	FOperationalReport ReceivedReport;
+	FText ReportError;
 	if (!TeamMemory->ReceiveReport(
 		Report, ReceivedReport, ReportError))
 	{
@@ -960,21 +1057,23 @@ bool AGroupManagerActor::SubmitReconReportAndComplete(
 	}
 
 	if (!ExecutionLog->RecordOperationalEvent(
-		ActiveReconRunId,
+		RunId,
 		CurrentCommand.CommandId,
 		GetCommandGroupId(),
 		EScenarioExecutionEventType::OperationalReportReceived,
 		FGuid(),
 		ReceivedReport.ReportId,
-		TEXT("ReconReportReceived"),
-		TEXT("HQ received the Recon report.")).IsValid())
+		ReceivedResultCode,
+		FString::Printf(TEXT("HQ received the %s report."),
+			*OperationLabel)).IsValid())
 	{
 		return false;
 	}
 
 	UE_LOG(LogTemp, Display,
-		TEXT("[TeamMemory:%u] Recon Report received. Report:%s Command:%s Facts:%d"),
+		TEXT("[TeamMemory:%u] %s Report received. Report:%s Command:%s Facts:%d"),
 		TeamID,
+		*OperationLabel,
 		*ReceivedReport.ReportId.ToString(EGuidFormats::DigitsWithHyphens),
 		*CurrentCommand.CommandId.ToString(EGuidFormats::DigitsWithHyphens),
 		ReceivedReport.Facts.Num());
@@ -985,7 +1084,7 @@ bool AGroupManagerActor::SubmitReconReportAndComplete(
 		if (Requirement.bRequired
 			&& !TeamMemory->HasReceivedRequirement(
 				TeamID,
-				ActiveReconRunId,
+				RunId,
 				CurrentCommand.CommandId,
 				Requirement))
 		{
@@ -996,17 +1095,19 @@ bool AGroupManagerActor::SubmitReconReportAndComplete(
 	const FGuid CompletedCommandId = CurrentCommand.CommandId;
 	if (!TransitionCurrentCommandStatusForRun(
 		ECommandStatus::Completed,
-		TEXT("ReconReportReceived"),
-		TEXT("All required Recon information was received."),
-		ActiveReconRunId,
+		ReceivedResultCode,
+		FString::Printf(TEXT("All required %s information was received."),
+			*OperationLabel),
+		RunId,
 		ExecutionLog))
 	{
 		return false;
 	}
 
 	UE_LOG(LogTemp, Display,
-		TEXT("[Group:%s] Recon completed. Command:%s Report:%s Facts:%d"),
+		TEXT("[Group:%s] %s completed. Command:%s Report:%s Facts:%d"),
 		*GroupID,
+		*OperationLabel,
 		*CompletedCommandId.ToString(EGuidFormats::DigitsWithHyphens),
 		*ReceivedReport.ReportId.ToString(EGuidFormats::DigitsWithHyphens),
 		ReceivedReport.Facts.Num());
@@ -1021,6 +1122,246 @@ void AGroupManagerActor::StopReconMonitoring()
 	ActiveReconExecutionLog.Reset();
 	ReconExecutionStartedAtSeconds = 0.0;
 	ReconObservationStartedAtSeconds = -1.0;
+	SetActorTickEnabled(false);
+}
+
+void AGroupManagerActor::BeginSecureMonitoring(
+	const FMissionContext& Mission,
+	const float AreaRadius,
+	const FGuid& RunId,
+	UScenarioExecutionLogSubsystem* ExecutionLog)
+{
+	ActiveSecureMission = Mission;
+	ActiveSecureAreaRadius = AreaRadius;
+	ActiveSecureRunId = RunId;
+	ActiveSecureExecutionLog = ExecutionLog;
+	SecureExecutionStartedAtSeconds = GetWorld()
+		? static_cast<double>(GetWorld()->GetTimeSeconds())
+		: 0.0;
+	SecureControlStartedAtSeconds = -1.0;
+	bSecureMonitoringActive = true;
+	SetActorTickEnabled(true);
+
+	UE_LOG(LogTemp, Display,
+		TEXT("[Group:%s] Secure monitoring started. Area:%s Radius:%.1f"),
+		*GroupID,
+		*Mission.ObjectiveId.ToString(),
+		AreaRadius);
+}
+
+void AGroupManagerActor::UpdateSecureExecution()
+{
+	if (!bSecureMonitoringActive
+		|| !bHasCurrentCommand
+		|| CurrentCommand.Status != ECommandStatus::Executing
+		|| CurrentCommand.CommandId != ActiveSecureMission.CommandId
+		|| !GetWorld())
+	{
+		return;
+	}
+
+	const double NowSeconds =
+		static_cast<double>(GetWorld()->GetTimeSeconds());
+	const auto IsLiving = [](const ACharacter* Character)
+	{
+		const UHealthComponent* Health = nullptr;
+		if (const ARetryNPCCharacter* NPC =
+			Cast<ARetryNPCCharacter>(Character))
+		{
+			Health = NPC->HealthComponent;
+		}
+		else if (const ARetryCharacter* Player =
+			Cast<ARetryCharacter>(Character))
+		{
+			Health = Player->HealthComponent;
+		}
+		return IsValid(Character) && Health && !Health->IsDead();
+	};
+	const auto IsInsideArea = [this](const ACharacter* Character)
+	{
+		if (!IsValid(Character) || !Character->GetCapsuleComponent())
+		{
+			return false;
+		}
+		const FVector Location = Character->GetActorLocation();
+		const FVector AreaLocation = ActiveSecureMission.ObjectiveLocation;
+		const float VerticalTolerance =
+			Character->GetCapsuleComponent()->GetScaledCapsuleHalfHeight() + 100.f;
+		return FVector::DistSquared2D(Location, AreaLocation)
+				<= FMath::Square(ActiveSecureAreaRadius)
+			&& FMath::Abs(Location.Z - AreaLocation.Z)
+				<= VerticalTolerance;
+	};
+
+	int32 LivingGroupMemberCount = 0;
+	for (const ARetryNPCCharacter* Member : Members)
+	{
+		if (IsLiving(Member))
+		{
+			++LivingGroupMemberCount;
+		}
+	}
+
+	int32 FriendlyCountInside = 0;
+	int32 HostileCountInside = 0;
+	const IGenericTeamAgentInterface* LeaderTeamAgent = Leader
+		? Cast<IGenericTeamAgentInterface>(Leader->GetController())
+		: nullptr;
+	for (TActorIterator<ACharacter> It(GetWorld()); It; ++It)
+	{
+		ACharacter* Character = *It;
+		if (!IsLiving(Character) || !IsInsideArea(Character))
+		{
+			continue;
+		}
+		const ETeamAttitude::Type Attitude = LeaderTeamAgent
+			? LeaderTeamAgent->GetTeamAttitudeTowards(*Character)
+			: ETeamAttitude::Neutral;
+		if (Attitude == ETeamAttitude::Friendly)
+		{
+			++FriendlyCountInside;
+		}
+		else if (Attitude == ETeamAttitude::Hostile)
+		{
+			++HostileCountInside;
+		}
+	}
+
+	const bool bLeaderAvailable = IsLiving(Leader);
+	const bool bLeaderInsideArea =
+		bLeaderAvailable && IsInsideArea(Leader);
+	const bool bHasControl = bLeaderInsideArea
+		&& FriendlyCountInside > 0
+		&& HostileCountInside == 0;
+	if (bHasControl)
+	{
+		if (SecureControlStartedAtSeconds < 0.0)
+		{
+			SecureControlStartedAtSeconds = NowSeconds;
+			UE_LOG(LogTemp, Display,
+				TEXT("[Group:%s] Secure control hold started. Hold:%.1fs Friendlies:%d"),
+				*GroupID,
+				CurrentCommand.CompletionCriteria.MinimumHoldSeconds,
+				FriendlyCountInside);
+		}
+	}
+	else
+	{
+		if (SecureControlStartedAtSeconds >= 0.0)
+		{
+			UE_LOG(LogTemp, Display,
+				TEXT("[Group:%s] Secure control hold interrupted. LeaderInside:%s Hostiles:%d"),
+				*GroupID,
+				bLeaderInsideArea ? TEXT("true") : TEXT("false"),
+				HostileCountInside);
+		}
+		SecureControlStartedAtSeconds = -1.0;
+	}
+
+	FAreaControlSnapshot Snapshot;
+	Snapshot.bLeaderAvailable = bLeaderAvailable;
+	Snapshot.bLeaderInsideArea = bLeaderInsideArea;
+	Snapshot.LivingGroupMemberCount = LivingGroupMemberCount;
+	Snapshot.FriendlyCountInside = FriendlyCountInside;
+	Snapshot.HostileCountInside = HostileCountInside;
+	Snapshot.ExecutionElapsedSeconds =
+		FMath::Max(0.0, NowSeconds - SecureExecutionStartedAtSeconds);
+	Snapshot.StableControlSeconds =
+		SecureControlStartedAtSeconds >= 0.0
+			? FMath::Max(0.0, NowSeconds - SecureControlStartedAtSeconds)
+			: 0.0;
+
+	const FAreaControlDecision Decision =
+		FAreaControlEvaluator::EvaluateSecureArea(CurrentCommand, Snapshot);
+	switch (Decision.Outcome)
+	{
+	case EAreaControlOutcome::Secured:
+		SubmitSecureReportAndComplete(NowSeconds);
+		break;
+	case EAreaControlOutcome::FailedLeaderUnavailable:
+		TransitionCurrentCommandStatusForRun(
+			ECommandStatus::Failed,
+			TEXT("LeaderUnavailable"),
+			TEXT("Secure Area failed because the group leader is unavailable."),
+			ActiveSecureRunId,
+			ActiveSecureExecutionLog.Get());
+		break;
+	case EAreaControlOutcome::FailedNoCombatPower:
+		TransitionCurrentCommandStatusForRun(
+			ECommandStatus::Failed,
+			TEXT("NoCombatPower"),
+			TEXT("Secure Area failed because the group has no living combat power."),
+			ActiveSecureRunId,
+			ActiveSecureExecutionLog.Get());
+		break;
+	case EAreaControlOutcome::FailedTimeout:
+		TransitionCurrentCommandStatusForRun(
+			ECommandStatus::Failed,
+			TEXT("SecureAreaTimeout"),
+			TEXT("Secure Area failed because the command timeout elapsed."),
+			ActiveSecureRunId,
+			ActiveSecureExecutionLog.Get());
+		break;
+	default:
+		break;
+	}
+}
+
+bool AGroupManagerActor::SubmitSecureReportAndComplete(
+	const double SecuredAtSeconds)
+{
+	UScenarioExecutionLogSubsystem* ExecutionLog =
+		ActiveSecureExecutionLog.Get();
+	if (!ExecutionLog
+		|| !ExecutionLog->IsRecordingRun(ActiveSecureRunId))
+	{
+		return false;
+	}
+
+	FOperationalReport Report;
+	FText ReportError;
+	if (!BuildSecureAreaOperationalReport(
+		CurrentCommand,
+		ActiveSecureMission,
+		ActiveSecureRunId,
+		TeamID,
+		GetCommandGroupId(),
+		SecuredAtSeconds,
+		Report,
+		ReportError))
+	{
+		UE_LOG(LogTemp, Error,
+			TEXT("[Group:%s] Secure Area Report build failed: %s"),
+			*GroupID,
+			*ReportError.ToString());
+		TransitionCurrentCommandStatusForRun(
+			ECommandStatus::Failed,
+			TEXT("SecureReportBuildFailed"),
+			ReportError.ToString(),
+			ActiveSecureRunId,
+			ExecutionLog);
+		return false;
+	}
+
+	return SubmitBuiltReportAndComplete(
+		Report,
+		ActiveSecureRunId,
+		ExecutionLog,
+		TEXT("AreaSecured"),
+		TEXT("SecureReportCreated"),
+		TEXT("SecureReportReceived"),
+		TEXT("Secure Area"));
+}
+
+void AGroupManagerActor::StopSecureMonitoring()
+{
+	bSecureMonitoringActive = false;
+	ActiveSecureMission = FMissionContext();
+	ActiveSecureRunId.Invalidate();
+	ActiveSecureExecutionLog.Reset();
+	ActiveSecureAreaRadius = 0.f;
+	SecureExecutionStartedAtSeconds = 0.0;
+	SecureControlStartedAtSeconds = -1.0;
 	SetActorTickEnabled(false);
 }
 

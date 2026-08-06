@@ -151,6 +151,72 @@ bool FGroupMissionDispatchAppliesToAllBeforeExecuting::RunTest(
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FGroupMissionDispatchStartsSecureAreaExecution,
+	"Retry.Mission.GroupDispatch.StartsSecureAreaExecution",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FGroupMissionDispatchStartsSecureAreaExecution::RunTest(
+	const FString& Parameters)
+{
+	GroupMissionDispatchTests::FScopedTestWorld TestWorld;
+	GroupMissionDispatchTests::FExecutionLogFixture LogFixture;
+	AGroupManagerActor* Group = TestWorld.SpawnGroup(TEXT("GroupA"));
+	FCommandIntent Command = GroupMissionDispatchTests::MakeCommand();
+	Command.Verb = ECommandVerb::Secure;
+	TestTrue(TEXT("Secure command is assigned before dispatch."),
+		Group->AssignCommandForRun(
+			Command, LogFixture.RunContext.RunId, LogFixture.Log).IsSuccess());
+
+	UNPCDecisionComponent* LeaderDecision =
+		NewObject<UNPCDecisionComponent>();
+	UNPCDecisionComponent* MemberDecision =
+		NewObject<UNPCDecisionComponent>();
+	const FMissionContext Mission =
+		GroupMissionDispatchTests::MakeMission(
+			Command.CommandId, TEXT("ObjectiveA"));
+	const FGroupMissionDispatchResult InvalidRadiusResult =
+		Group->DispatchResolvedMissionForRun(
+			Mission,
+			{LeaderDecision, MemberDecision},
+			LogFixture.RunContext.RunId,
+			LogFixture.Log,
+			0.f);
+	TestEqual(TEXT("Secure dispatch rejects a missing Area radius."),
+		InvalidRadiusResult.Outcome,
+		EGroupMissionDispatchOutcome::MissionRejected);
+	TestFalse(TEXT("Radius preflight does not mutate recipients."),
+		LeaderDecision->HasActiveMission()
+		|| MemberDecision->HasActiveMission());
+
+	const FGroupMissionDispatchResult Result =
+		Group->DispatchResolvedMissionForRun(
+			Mission,
+			{LeaderDecision, MemberDecision},
+			LogFixture.RunContext.RunId,
+			LogFixture.Log,
+			500.f);
+
+	TestTrue(TEXT("Secure Area dispatch succeeds."), Result.IsSuccess());
+	TestEqual(TEXT("Secure command begins execution."),
+		Group->GetCurrentCommand().Status, ECommandStatus::Executing);
+	TestTrue(TEXT("Every recipient receives the Area Mission."),
+		LeaderDecision->HasActiveMission()
+		&& MemberDecision->HasActiveMission());
+	TestTrue(TEXT("Secure command can terminate cleanly."),
+		Group->TransitionCurrentCommandStatusForRun(
+			ECommandStatus::Cancelled,
+			TEXT("TestCancelled"),
+			TEXT("Cancelled by automation test."),
+			LogFixture.RunContext.RunId,
+			LogFixture.Log));
+	TestFalse(TEXT("Terminal cleanup clears the leader Mission."),
+		LeaderDecision->HasActiveMission());
+	TestFalse(TEXT("Terminal cleanup clears the member Mission."),
+		MemberDecision->HasActiveMission());
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FGroupMissionDispatchRestoresPreviousStateWhenTransitionFails,
 	"Retry.Mission.GroupDispatch.RestoresWhenTransitionFails",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)

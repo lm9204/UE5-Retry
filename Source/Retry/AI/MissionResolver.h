@@ -35,4 +35,9 @@ public:
 		const FCommandIntent& Command,
 		FName ResolvedObjectiveId,
 		const TArray<FObservationPointCandidate>& Candidates);
+
+	static FMissionResolutionResult ResolveSecureArea(
+		const FCommandIntent& Command,
+		FName ResolvedObjectiveId,
+		FVector ResolvedObjectiveLocation);
 };

@@ -91,3 +91,13 @@ RETRY_API bool BuildReconOperationalReport(
 	double ObservedAtSeconds,
 	FOperationalReport& OutReport,
 	FText& OutError);
+
+RETRY_API bool BuildSecureAreaOperationalReport(
+	const FCommandIntent& Command,
+	const FMissionContext& Mission,
+	const FGuid& RunId,
+	uint8 TeamId,
+	FName SourceGroupId,
+	double SecuredAtSeconds,
+	FOperationalReport& OutReport,
+	FText& OutError);

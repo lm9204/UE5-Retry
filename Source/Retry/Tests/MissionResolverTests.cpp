@@ -35,6 +35,58 @@ namespace MissionResolverTests
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FMissionResolverBuildsSecureAreaMission,
+	"Retry.Mission.Resolver.BuildsSecureAreaMission",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMissionResolverBuildsSecureAreaMission::RunTest(
+	const FString& Parameters)
+{
+	FCommandIntent Command = MissionResolverTests::MakeAssignedReconCommand();
+	Command.Verb = ECommandVerb::Secure;
+	FCommandConstraint& Hard = Command.Constraints.AddDefaulted_GetRef();
+	Hard.ConstraintId = TEXT("StayInsideArea");
+	Hard.bIsHardConstraint = true;
+	const FVector AreaLocation(500.f, 250.f, 10.f);
+
+	const FMissionResolutionResult Result =
+		FMissionResolver::ResolveSecureArea(
+			Command, TEXT("ReconArea_A"), AreaLocation);
+
+	TestTrue(TEXT("An assigned Secure Area command resolves."),
+		Result.IsSuccess());
+	TestEqual(TEXT("The Area remains the Mission objective."),
+		Result.Mission.ObjectiveId, FName(TEXT("ReconArea_A")));
+	TestEqual(TEXT("The resolved Area location is preserved."),
+		Result.Mission.ObjectiveLocation, AreaLocation);
+	TestEqual(TEXT("Hard constraints remain explicit."),
+		Result.Mission.HardConstraints.Num(), 1);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FMissionResolverRejectsInvalidSecureArea,
+	"Retry.Mission.Resolver.RejectsInvalidSecureArea",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMissionResolverRejectsInvalidSecureArea::RunTest(
+	const FString& Parameters)
+{
+	FCommandIntent Command = MissionResolverTests::MakeAssignedReconCommand();
+	Command.Verb = ECommandVerb::Secure;
+	TestEqual(TEXT("A mismatched Objective is rejected."),
+		FMissionResolver::ResolveSecureArea(
+			Command, TEXT("OtherArea"), FVector::ZeroVector).Outcome,
+		EMissionResolutionOutcome::ObjectiveMismatch);
+	Command.Verb = ECommandVerb::Recon;
+	TestEqual(TEXT("Recon cannot enter the Secure resolver."),
+		FMissionResolver::ResolveSecureArea(
+			Command, TEXT("ReconArea_A"), FVector::ZeroVector).Outcome,
+		EMissionResolutionOutcome::UnsupportedCommand);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FMissionResolverBuildsReconMissionContext,
 	"Retry.Mission.Resolver.BuildsReconMissionContext",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)

@@ -30,6 +30,42 @@ namespace OperationalReportTests
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FOperationalReportBuildsSecureAreaFact,
+	"Retry.Operational.Report.BuildsSecureAreaFact",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FOperationalReportBuildsSecureAreaFact::RunTest(
+	const FString& Parameters)
+{
+	FCommandIntent Command = OperationalReportTests::MakeCommand();
+	Command.Verb = ECommandVerb::Secure;
+	FInformationRequirement& Requirement =
+		Command.InformationRequirements.AddDefaulted_GetRef();
+	Requirement.RequirementId = TEXT("AreaSecured");
+	Requirement.SubjectId = TEXT("ReconArea_A");
+	FMissionContext Mission =
+		OperationalReportTests::MakeMission(Command.CommandId);
+	Mission.ObjectiveId = TEXT("ReconArea_A");
+	FOperationalReport Report;
+	FText Error;
+
+	TestTrue(TEXT("Secure completion builds an operational report."),
+		BuildSecureAreaOperationalReport(
+			Command, Mission, FGuid::NewGuid(), 1, TEXT("A"),
+			10.0, Report, Error));
+	TestEqual(TEXT("One AreaSecured Fact is emitted."),
+		Report.Facts.Num(), 1);
+	if (Report.Facts.Num() == 1)
+	{
+		TestEqual(TEXT("The secured predicate is explicit."),
+			Report.Facts[0].PredicateId, FName(TEXT("AreaSecured")));
+		TestEqual(TEXT("The secured Area is the subject."),
+			Report.Facts[0].SubjectId, FName(TEXT("ReconArea_A")));
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FOperationalReportBuildsRequiredFacts,
 	"Retry.Operational.Report.BuildsRequiredFacts",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
