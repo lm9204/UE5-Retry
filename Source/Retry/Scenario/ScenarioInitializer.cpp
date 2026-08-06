@@ -1,13 +1,16 @@
 #include "Scenario/ScenarioInitializer.h"
 
 #include "Kismet/GameplayStatics.h"
+#include "TimerManager.h"
 
 #include "AI/GroupManagerActor.h"
 #include "AI/ScenarioMarkerActor.h"
+#include "AI/TeamOperationalMemorySubsystem.h"
 #include "Components/MemoryComponent.h"
 #include "LLMRequestQueue.h"
 #include "RetryNPCCharacter.h"
 #include "Scenario/ScenarioDefinition.h"
+#include "Scenario/ScenarioExecutionLogSubsystem.h"
 #include "Scenario/ScenarioRuntimeSubsystem.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogScenarioInitializer, Log, All);
@@ -59,6 +62,13 @@ void AScenarioInitializer::BeginPlay()
 		*RunContext.RunId.ToString(EGuidFormats::DigitsWithHyphens),
 		RunContext.LaunchOptions.Seed,
 		RunContext.LaunchOptions.bAutoStart ? TEXT("true") : TEXT("false"));
+
+	if (RunContext.LaunchOptions.bAutoStart)
+	{
+		GetWorldTimerManager().SetTimerForNextTick(
+			FTimerDelegate::CreateUObject(
+				this, &AScenarioInitializer::StartOpeningOrders));
+	}
 }
 
 void AScenarioInitializer::ValidateScenarioSetup()
@@ -300,6 +310,15 @@ bool AScenarioInitializer::ValidatePlacedActors(FText& OutMessage) const
 
 void AScenarioInitializer::ResetRuntimeState() const
 {
+	if (UWorld* World = GetWorld())
+	{
+		if (UTeamOperationalMemorySubsystem* TeamMemory =
+			World->GetSubsystem<UTeamOperationalMemorySubsystem>())
+		{
+			TeamMemory->ResetOperationalMemory();
+		}
+	}
+
 	if (UGameInstance* GameInstance = GetGameInstance())
 	{
 		if (ULLMRequestQueue* LLMQueue = GameInstance->GetSubsystem<ULLMRequestQueue>())
@@ -323,6 +342,102 @@ void AScenarioInitializer::ResetRuntimeState() const
 		{
 			Memory->ResetMemories();
 		}
+	}
+}
+
+void AScenarioInitializer::StartOpeningOrders()
+{
+	UGameInstance* GameInstance = GetGameInstance();
+	UScenarioRuntimeSubsystem* Runtime = GameInstance
+		? GameInstance->GetSubsystem<UScenarioRuntimeSubsystem>()
+		: nullptr;
+	if (!Runtime)
+	{
+		return;
+	}
+
+	const FScenarioRunContext RunContext = Runtime->GetCurrentRunContext();
+	UScenarioDefinition* Definition = ScenarioDefinition.LoadSynchronous();
+	if (!RunContext.IsValid()
+		|| !IsValid(Definition)
+		|| RunContext.ScenarioId != Definition->ScenarioId)
+	{
+		UE_LOG(LogScenarioInitializer, Warning,
+			TEXT("[Scenario] Opening Orders skipped because the active Run changed."));
+		return;
+	}
+
+	TArray<FCommandIntent> Commands;
+	FText BuildError;
+	if (!Definition->BuildOpeningOrders(Commands, BuildError))
+	{
+		UE_LOG(LogScenarioInitializer, Error,
+			TEXT("[Scenario] Opening Orders are invalid: %s"),
+			*BuildError.ToString());
+		return;
+	}
+
+	if (Commands.IsEmpty())
+	{
+		UE_LOG(LogScenarioInitializer, Display,
+			TEXT("[Scenario] Auto Start has no Opening Orders."));
+		return;
+	}
+
+	TArray<AActor*> GroupActors;
+	UGameplayStatics::GetAllActorsOfClass(
+		this, AGroupManagerActor::StaticClass(), GroupActors);
+	TMap<FName, AGroupManagerActor*> GroupsById;
+	for (AActor* Actor : GroupActors)
+	{
+		AGroupManagerActor* Group = CastChecked<AGroupManagerActor>(Actor);
+		GroupsById.Add(FName(*Group->GroupID.TrimStartAndEnd()), Group);
+	}
+
+	UScenarioExecutionLogSubsystem* ExecutionLog =
+		GameInstance->GetSubsystem<UScenarioExecutionLogSubsystem>();
+	for (const FCommandIntent& Command : Commands)
+	{
+		AGroupManagerActor* const* GroupPtr =
+			GroupsById.Find(Command.AssignedGroupId);
+		if (!GroupPtr || !IsValid(*GroupPtr))
+		{
+			UE_LOG(LogScenarioInitializer, Error,
+				TEXT("[Scenario] Opening Order group '%s' was not found."),
+				*Command.AssignedGroupId.ToString());
+			continue;
+		}
+
+		AGroupManagerActor* Group = *GroupPtr;
+		const FCommandAssignmentResult Assignment =
+			Group->AssignCommandForRun(
+				Command, RunContext.RunId, ExecutionLog);
+		if (!Assignment.IsSuccess())
+		{
+			UE_LOG(LogScenarioInitializer, Error,
+				TEXT("[Scenario] Opening Order assignment failed for group '%s': %s"),
+				*Command.AssignedGroupId.ToString(),
+				*Assignment.Message.ToString());
+			continue;
+		}
+
+		const FGroupMissionDispatchResult Dispatch =
+			Group->DispatchCurrentReconMissionForRun(
+				RunContext.RunId, ExecutionLog);
+		if (!Dispatch.IsSuccess())
+		{
+			UE_LOG(LogScenarioInitializer, Error,
+				TEXT("[Scenario] Opening Order dispatch failed for group '%s': %s"),
+				*Command.AssignedGroupId.ToString(),
+				*Dispatch.Message.ToString());
+			continue;
+		}
+
+		UE_LOG(LogScenarioInitializer, Display,
+			TEXT("[Scenario] Opening Order executing. Group:%s Command:%s Recipients:%d"),
+			*Command.AssignedGroupId.ToString(),
+			*Command.CommandId.ToString(EGuidFormats::DigitsWithHyphens),
+			Dispatch.RecipientCount);
 	}
 }
 

@@ -40,4 +40,5 @@ private:
 		bool bRequireActiveRunContext, FText& OutMessage) const;
 	bool ValidatePlacedActors(FText& OutMessage) const;
 	void ResetRuntimeState() const;
+	void StartOpeningOrders();
 };

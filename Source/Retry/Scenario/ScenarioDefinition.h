@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "AI/CommandTypes.h"
 #include "Engine/DataAsset.h"
 #include "Scenario/ScenarioTypes.h"
 #include "ScenarioDefinition.generated.h"
@@ -32,8 +33,16 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Scenario")
 	FScenarioLaunchOptions DefaultLaunchOptions;
 
+	/** Initial in-world orders issued by the scenario's HQ at run start. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Scenario|Opening Orders")
+	TArray<FCommandIntent> OpeningOrders;
+
 	UFUNCTION(BlueprintPure, Category="Scenario|Validation")
 	bool IsDefinitionValid(FText& OutError) const;
+
+	bool BuildOpeningOrders(
+		TArray<FCommandIntent>& OutCommands,
+		FText& OutError) const;
 
 	virtual FPrimaryAssetId GetPrimaryAssetId() const override;
 };
