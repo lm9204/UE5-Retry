@@ -30,6 +30,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category="LLM")
 	void ResetQueueForScenarioTransition();
 
+	UFUNCTION(BlueprintPure, Category="LLM")
+	bool IsRequestEnabledForCurrentContext() const;
+
 	UPROPERTY(EditAnywhere, Category="LLM")
 	FString ServerURL = TEXT("http://localhost:8080/v1/chat/completions");
 

@@ -32,4 +32,12 @@ bool TryCreateScenarioRunContext(
 	return true;
 }
 
+bool ShouldAllowLLMRequests(
+	const FScenarioRunContext* ActiveScenarioContext)
+{
+	return !ActiveScenarioContext
+		|| (ActiveScenarioContext->IsValid()
+			&& ActiveScenarioContext->LaunchOptions.bUseLLM);
+}
+
 #undef LOCTEXT_NAMESPACE

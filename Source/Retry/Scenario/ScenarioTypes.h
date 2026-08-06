@@ -75,3 +75,10 @@ RETRY_API bool TryCreateScenarioRunContext(
 	const FScenarioLaunchOptions& LaunchOptions,
 	FScenarioRunContext& OutContext,
 	FText& OutError);
+
+/**
+ * No active Scenario preserves legacy LLM behavior. An active Scenario fails
+ * closed unless its valid Run Context explicitly enables LLM requests.
+ */
+RETRY_API bool ShouldAllowLLMRequests(
+	const FScenarioRunContext* ActiveScenarioContext);

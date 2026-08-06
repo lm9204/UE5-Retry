@@ -10,6 +10,8 @@
 #include "Components/HealthComponent.h"
 #include "Components/PersonalityComponent.h"
 #include "Engine/World.h"
+#include "Scenario/ScenarioRuntimeSubsystem.h"
+#include "Scenario/ScenarioTypes.h"
 #include "UI/FallbackDialogueTypes.h"
 
 void ULLMRequestQueue::Initialize(FSubsystemCollectionBase& Collection)
@@ -76,6 +78,13 @@ void ULLMRequestQueue::HandleWorldCleanup(
 
 void ULLMRequestQueue::Enqueue(const FLLMRequest& Request)
 {
+    if (!IsRequestEnabledForCurrentContext())
+    {
+        UE_LOG(LogTemp, Verbose,
+            TEXT("[LLMQueue] Scenario Use LLM=false — 요청을 생성하지 않음"));
+        return;
+    }
+
     FLLMRequest RequestCopy = Request;
 
     RequestCopy.RequestID = NextRequestID++;
@@ -251,6 +260,21 @@ void ULLMRequestQueue::SendRequest(const FLLMRequest& Request)
         ApplyFallback(RequestCopy);
         ProcessNext();
     }
+}
+
+bool ULLMRequestQueue::IsRequestEnabledForCurrentContext() const
+{
+    const UGameInstance* GameInstance = GetGameInstance();
+    const UScenarioRuntimeSubsystem* Runtime = GameInstance
+        ? GameInstance->GetSubsystem<UScenarioRuntimeSubsystem>()
+        : nullptr;
+    if (!Runtime || !Runtime->IsScenarioActive())
+    {
+        return ShouldAllowLLMRequests(nullptr);
+    }
+
+    const FScenarioRunContext RunContext = Runtime->GetCurrentRunContext();
+    return ShouldAllowLLMRequests(&RunContext);
 }
 
 void ULLMRequestQueue::ParseAndApplyResponse(
@@ -481,7 +505,7 @@ void ULLMRequestQueue::PlayFallbackDialogue(AActor* TargetActor, UPersonalityCom
 
 void ULLMRequestQueue::EnqueueGroupRequest(AGroupManagerActor* Group)
 {
-    if (!IsValid(Group)) return;
+    if (!IsValid(Group) || !IsRequestEnabledForCurrentContext()) return;
 
     FLLMRequest Request;
     Request.RequestType = ELLMRequestType::GroupCommand;

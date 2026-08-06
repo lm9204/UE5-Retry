@@ -275,7 +275,7 @@ void ARetryNPCCharacter::OnMemoryThresholdReached()
 	if (!GI) return;
 
 	ULLMRequestQueue* Queue = GI->GetSubsystem<ULLMRequestQueue>();
-	if (!Queue) return;
+	if (!Queue || !Queue->IsRequestEnabledForCurrentContext()) return;
 
 	TArray<FNPCMemory> RecentMemories = MemoryComponent->GetRecentMemories(5);
 	FString Prompt = PersonalityComponent->BuildLLMPrompt(RecentMemories);

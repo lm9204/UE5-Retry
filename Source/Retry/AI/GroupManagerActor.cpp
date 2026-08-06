@@ -139,15 +139,17 @@ void AGroupManagerActor::AddGroupMemory(
 
     if (AccumulatedEmotionScore >= GroupEmotionThreshold)
     {
-        UE_LOG(LogTemp, Warning,
-            TEXT("[Group:%s] 임계값 초과 — LLM 요청"), *GroupID);
-
         UGameInstance* GI = GetGameInstance();
         if (GI)
         {
             if (ULLMRequestQueue* Queue = GI->GetSubsystem<ULLMRequestQueue>())
             {
-                Queue->EnqueueGroupRequest(this);  // 아래 추가
+                if (Queue->IsRequestEnabledForCurrentContext())
+                {
+                    UE_LOG(LogTemp, Warning,
+                        TEXT("[Group:%s] 임계값 초과 — LLM 요청"), *GroupID);
+                    Queue->EnqueueGroupRequest(this);
+                }
             }
         }
 

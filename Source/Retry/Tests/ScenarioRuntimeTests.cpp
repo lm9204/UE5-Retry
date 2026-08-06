@@ -22,6 +22,39 @@ namespace ScenarioRuntimeTests
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FScenarioLLMPolicyRespectsLaunchOption,
+	"Retry.Scenario.LLMPolicy.RespectsLaunchOption",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FScenarioLLMPolicyRespectsLaunchOption::RunTest(
+	const FString& Parameters)
+{
+	TestTrue(TEXT("A non-Scenario legacy level preserves LLM behavior."),
+		ShouldAllowLLMRequests(nullptr));
+
+	UScenarioDefinition* Definition =
+		ScenarioRuntimeTests::MakeValidDefinition(TEXT("LLMPolicy"));
+	FScenarioLaunchOptions LaunchOptions;
+	LaunchOptions.bUseLLM = false;
+	FScenarioRunContext Context;
+	FText Error;
+	TestTrue(TEXT("A disabled Scenario Context is valid."),
+		TryCreateScenarioRunContext(
+			Definition, LaunchOptions, Context, Error));
+	TestFalse(TEXT("Use LLM=false blocks every request type."),
+		ShouldAllowLLMRequests(&Context));
+
+	Context.LaunchOptions.bUseLLM = true;
+	TestTrue(TEXT("Use LLM=true allows requests."),
+		ShouldAllowLLMRequests(&Context));
+
+	Context.RunId.Invalidate();
+	TestFalse(TEXT("An invalid active Context fails closed."),
+		ShouldAllowLLMRequests(&Context));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FScenarioRegistryRejectsInvalidEntries,
 	"Retry.Scenario.Registry.RejectsInvalidEntries",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
