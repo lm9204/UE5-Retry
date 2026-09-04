@@ -40,4 +40,8 @@ public:
 		const FCommandIntent& Command,
 		FName ResolvedObjectiveId,
 		FVector ResolvedObjectiveLocation);
+
+	static FMissionResolutionResult ResolveDefendPosition(
+		const FCommandIntent& Command,
+		FVector ResolvedPosition);
 };

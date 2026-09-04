@@ -55,10 +55,21 @@ private:
 		const FGuid& RunId);
 	void EvaluateFollowUpOrders();
 	void StopFollowUpOrderMonitoring();
+	void BeginCommanderObjectiveMonitoring(
+		TArray<FScenarioOperationalObjective> Objectives,
+		const FGuid& RunId);
+	void EvaluateCommanderObjectives();
+	void StopCommanderObjectiveMonitoring();
 
 	UPROPERTY(Transient)
 	TArray<FScenarioFollowUpOrder> PendingFollowUpOrders;
 
 	FGuid FollowUpRunId;
 	FTimerHandle FollowUpEvaluationTimer;
+
+	UPROPERTY(Transient)
+	TArray<FScenarioOperationalObjective> PendingOperationalObjectives;
+
+	FGuid CommanderRunId;
+	FTimerHandle CommanderEvaluationTimer;
 };

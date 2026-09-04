@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "AI/CommandTypes.h"
+#include "AI/OperationalObjectiveTypes.h"
 #include "Engine/DataAsset.h"
 #include "Scenario/ScenarioTypes.h"
 #include "ScenarioDefinition.generated.h"
@@ -39,6 +40,33 @@ struct FScenarioFollowUpOrder
 	TArray<FScenarioFactCondition> RequiredFacts;
 };
 
+/** A designer-authored desired state activated by received operational Facts. */
+USTRUCT(BlueprintType)
+struct FScenarioOperationalObjective
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Scenario|Operational Objective")
+	FName ObjectiveId;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Scenario|Operational Objective")
+	FName DesiredStateId;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Scenario|Operational Objective")
+	FName SubjectId;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Scenario|Operational Objective")
+	uint8 TeamId = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Scenario|Operational Objective",
+		meta=(ClampMin="0", ClampMax="100"))
+	int32 Priority = 50;
+
+	/** All conditions must be present before this objective may be planned. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Scenario|Operational Objective")
+	TArray<FScenarioFactCondition> ActivationFacts;
+};
+
 /**
  * 메뉴에 표시하고 실행할 Scenario 한 개의 정적 설정이다.
  * NPC와 Group 배치는 초기 버전에서 Level이 소유하며, 이 asset은 실행 정보를 가리킨다.
@@ -72,6 +100,10 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Scenario|Follow Up Orders")
 	TArray<FScenarioFollowUpOrder> FollowUpOrders;
 
+	/** Desired HQ states that the Commander turns into runtime Commands. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Scenario|Operational Objectives")
+	TArray<FScenarioOperationalObjective> OperationalObjectives;
+
 	UFUNCTION(BlueprintPure, Category="Scenario|Validation")
 	bool IsDefinitionValid(FText& OutError) const;
 
@@ -81,6 +113,10 @@ public:
 
 	bool BuildFollowUpOrders(
 		TArray<FScenarioFollowUpOrder>& OutOrders,
+		FText& OutError) const;
+
+	bool BuildOperationalObjectives(
+		TArray<FScenarioOperationalObjective>& OutObjectives,
 		FText& OutError) const;
 
 	virtual FPrimaryAssetId GetPrimaryAssetId() const override;

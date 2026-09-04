@@ -217,6 +217,58 @@ bool FGroupMissionDispatchStartsSecureAreaExecution::RunTest(
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FGroupMissionDispatchKeepsDefendMissionExecuting,
+	"Retry.Mission.GroupDispatch.KeepsDefendMissionExecuting",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FGroupMissionDispatchKeepsDefendMissionExecuting::RunTest(
+	const FString& Parameters)
+{
+	GroupMissionDispatchTests::FScopedTestWorld TestWorld;
+	GroupMissionDispatchTests::FExecutionLogFixture LogFixture;
+	AGroupManagerActor* Group = TestWorld.SpawnGroup(TEXT("GroupA"));
+	FCommandIntent Command = GroupMissionDispatchTests::MakeCommand();
+	Command.Verb = ECommandVerb::Defend;
+	Command.TargetType = ECommandTargetType::Position;
+	Command.TargetLocation = FVector(100.f, 200.f, 0.f);
+	TestTrue(TEXT("Defend command is assigned before dispatch."),
+		Group->AssignCommandForRun(
+			Command, LogFixture.RunContext.RunId, LogFixture.Log).IsSuccess());
+
+	UNPCDecisionComponent* LeaderDecision =
+		NewObject<UNPCDecisionComponent>();
+	UNPCDecisionComponent* MemberDecision =
+		NewObject<UNPCDecisionComponent>();
+	const FMissionContext Mission =
+		GroupMissionDispatchTests::MakeMission(
+			Command.CommandId, TEXT("ObjectiveA"));
+	const FGroupMissionDispatchResult Result =
+		Group->DispatchResolvedMissionForRun(
+			Mission,
+			{LeaderDecision, MemberDecision},
+			LogFixture.RunContext.RunId,
+			LogFixture.Log);
+
+	TestTrue(TEXT("Defend Mission dispatch succeeds."), Result.IsSuccess());
+	TestEqual(TEXT("Defend remains an executing persistent command."),
+		Group->GetCurrentCommand().Status, ECommandStatus::Executing);
+	TestTrue(TEXT("Every recipient keeps the Defend Mission."),
+		LeaderDecision->HasActiveMission()
+		&& MemberDecision->HasActiveMission());
+	TestTrue(TEXT("A later replan can cancel the persistent Mission."),
+		Group->TransitionCurrentCommandStatusForRun(
+			ECommandStatus::Cancelled,
+			TEXT("Replanned"),
+			TEXT("Cancelled by automation test."),
+			LogFixture.RunContext.RunId,
+			LogFixture.Log));
+	TestFalse(TEXT("Cancellation clears the persistent Mission."),
+		LeaderDecision->HasActiveMission()
+		|| MemberDecision->HasActiveMission());
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FGroupMissionDispatchRestoresPreviousStateWhenTransitionFails,
 	"Retry.Mission.GroupDispatch.RestoresWhenTransitionFails",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)

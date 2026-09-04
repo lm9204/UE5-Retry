@@ -35,6 +35,30 @@ namespace MissionResolverTests
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FMissionResolverBuildsDefendPositionMission,
+	"Retry.Mission.Resolver.BuildsDefendPositionMission",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMissionResolverBuildsDefendPositionMission::RunTest(
+	const FString& Parameters)
+{
+	FCommandIntent Command = MissionResolverTests::MakeAssignedReconCommand();
+	Command.Verb = ECommandVerb::Defend;
+	Command.TargetType = ECommandTargetType::Position;
+	Command.TargetLocation = FVector(100.f, 200.f, 30.f);
+	const FVector ProjectedPosition(100.f, 200.f, 5.f);
+	const FMissionResolutionResult Result =
+		FMissionResolver::ResolveDefendPosition(Command, ProjectedPosition);
+	TestTrue(TEXT("An assigned Defend Position command resolves."),
+		Result.IsSuccess());
+	TestEqual(TEXT("The semantic Area subject is preserved."),
+		Result.Mission.ObjectiveId, Command.TargetId);
+	TestEqual(TEXT("The projected Position becomes the movement target."),
+		Result.Mission.ObjectiveLocation, ProjectedPosition);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FMissionResolverBuildsSecureAreaMission,
 	"Retry.Mission.Resolver.BuildsSecureAreaMission",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)

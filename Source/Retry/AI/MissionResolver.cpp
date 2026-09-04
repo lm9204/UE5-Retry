@@ -111,3 +111,35 @@ FMissionResolutionResult FMissionResolver::ResolveSecureArea(
 	Result.Outcome = EMissionResolutionOutcome::Resolved;
 	return Result;
 }
+
+FMissionResolutionResult FMissionResolver::ResolveDefendPosition(
+	const FCommandIntent& Command,
+	const FVector ResolvedPosition)
+{
+	FMissionResolutionResult Result;
+	if (!Command.CommandId.IsValid() || ResolvedPosition.ContainsNaN())
+	{
+		return Result;
+	}
+
+	if (Command.Status != ECommandStatus::Assigned)
+	{
+		Result.Outcome = EMissionResolutionOutcome::InvalidCommandState;
+		return Result;
+	}
+
+	if (Command.Verb != ECommandVerb::Defend
+		|| Command.TargetType != ECommandTargetType::Position)
+	{
+		Result.Outcome = EMissionResolutionOutcome::UnsupportedCommand;
+		return Result;
+	}
+
+	MissionResolver::CopyMissionInputs(Command, Result.Mission);
+	Result.Mission.ObjectiveId = Command.TargetId.IsNone()
+		? FName(TEXT("DefendPosition"))
+		: Command.TargetId;
+	Result.Mission.ObjectiveLocation = ResolvedPosition;
+	Result.Outcome = EMissionResolutionOutcome::Resolved;
+	return Result;
+}

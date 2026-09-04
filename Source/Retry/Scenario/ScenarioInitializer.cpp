@@ -4,14 +4,18 @@
 #include "TimerManager.h"
 
 #include "AI/GroupManagerActor.h"
+#include "AI/CommanderPlanner.h"
+#include "AI/OperationalObjectiveTypes.h"
 #include "AI/ScenarioMarkerActor.h"
 #include "AI/TeamOperationalMemorySubsystem.h"
 #include "Components/MemoryComponent.h"
+#include "Components/HealthComponent.h"
 #include "LLMRequestQueue.h"
 #include "RetryNPCCharacter.h"
 #include "Scenario/ScenarioDefinition.h"
 #include "Scenario/ScenarioExecutionLogSubsystem.h"
 #include "Scenario/ScenarioFollowUpOrderEvaluator.h"
+#include "Scenario/ScenarioOperationalObjectiveEvaluator.h"
 #include "Scenario/ScenarioRuntimeSubsystem.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogScenarioInitializer, Log, All);
@@ -76,6 +80,7 @@ void AScenarioInitializer::EndPlay(
 	const EEndPlayReason::Type EndPlayReason)
 {
 	StopFollowUpOrderMonitoring();
+	StopCommanderObjectiveMonitoring();
 	Super::EndPlay(EndPlayReason);
 }
 
@@ -377,9 +382,12 @@ void AScenarioInitializer::StartOpeningOrders()
 
 	TArray<FCommandIntent> Commands;
 	TArray<FScenarioFollowUpOrder> FollowUpOrders;
+	TArray<FScenarioOperationalObjective> OperationalObjectives;
 	FText BuildError;
 	if (!Definition->BuildOpeningOrders(Commands, BuildError)
-		|| !Definition->BuildFollowUpOrders(FollowUpOrders, BuildError))
+		|| !Definition->BuildFollowUpOrders(FollowUpOrders, BuildError)
+		|| !Definition->BuildOperationalObjectives(
+			OperationalObjectives, BuildError))
 	{
 		UE_LOG(LogScenarioInitializer, Error,
 			TEXT("[Scenario] Scenario Orders are invalid: %s"),
@@ -387,7 +395,9 @@ void AScenarioInitializer::StartOpeningOrders()
 		return;
 	}
 
-	if (Commands.IsEmpty() && FollowUpOrders.IsEmpty())
+	if (Commands.IsEmpty()
+		&& FollowUpOrders.IsEmpty()
+		&& OperationalObjectives.IsEmpty())
 	{
 		UE_LOG(LogScenarioInitializer, Display,
 			TEXT("[Scenario] Auto Start has no Opening Orders."));
@@ -425,6 +435,8 @@ void AScenarioInitializer::StartOpeningOrders()
 
 	BeginFollowUpOrderMonitoring(
 		MoveTemp(FollowUpOrders), RunContext.RunId);
+	BeginCommanderObjectiveMonitoring(
+		MoveTemp(OperationalObjectives), RunContext.RunId);
 }
 
 bool AScenarioInitializer::StartScenarioCommand(
@@ -604,6 +616,197 @@ void AScenarioInitializer::StopFollowUpOrderMonitoring()
 	}
 	PendingFollowUpOrders.Reset();
 	FollowUpRunId.Invalidate();
+}
+
+void AScenarioInitializer::BeginCommanderObjectiveMonitoring(
+	TArray<FScenarioOperationalObjective> Objectives,
+	const FGuid& RunId)
+{
+	StopCommanderObjectiveMonitoring();
+	if (Objectives.IsEmpty() || !RunId.IsValid() || !GetWorld())
+	{
+		return;
+	}
+
+	PendingOperationalObjectives = MoveTemp(Objectives);
+	CommanderRunId = RunId;
+	GetWorldTimerManager().SetTimer(
+		CommanderEvaluationTimer,
+		this,
+		&AScenarioInitializer::EvaluateCommanderObjectives,
+		0.5f,
+		true,
+		0.5f);
+	UE_LOG(LogScenarioInitializer, Display,
+		TEXT("[Scenario] Commander objective monitoring started. Run:%s Pending:%d"),
+		*RunId.ToString(EGuidFormats::DigitsWithHyphens),
+		PendingOperationalObjectives.Num());
+}
+
+void AScenarioInitializer::EvaluateCommanderObjectives()
+{
+	UGameInstance* GameInstance = GetGameInstance();
+	UScenarioRuntimeSubsystem* Runtime = GameInstance
+		? GameInstance->GetSubsystem<UScenarioRuntimeSubsystem>()
+		: nullptr;
+	const FScenarioRunContext RunContext = Runtime
+		? Runtime->GetCurrentRunContext()
+		: FScenarioRunContext();
+	if (!RunContext.IsValid() || RunContext.RunId != CommanderRunId)
+	{
+		StopCommanderObjectiveMonitoring();
+		return;
+	}
+
+	UTeamOperationalMemorySubsystem* TeamMemory = GetWorld()
+		? GetWorld()->GetSubsystem<UTeamOperationalMemorySubsystem>()
+		: nullptr;
+	UScenarioExecutionLogSubsystem* ExecutionLog = GameInstance
+		? GameInstance->GetSubsystem<UScenarioExecutionLogSubsystem>()
+		: nullptr;
+	if (!TeamMemory || !ExecutionLog)
+	{
+		return;
+	}
+
+	TArray<AActor*> GroupActors;
+	UGameplayStatics::GetAllActorsOfClass(
+		this, AGroupManagerActor::StaticClass(), GroupActors);
+	TMap<FName, AGroupManagerActor*> GroupsById;
+	TArray<FCommanderGroupState> GroupStates;
+	for (AActor* Actor : GroupActors)
+	{
+		AGroupManagerActor* Group = CastChecked<AGroupManagerActor>(Actor);
+		const FName GroupId(*Group->GroupID.TrimStartAndEnd());
+		GroupsById.Add(GroupId, Group);
+
+		FCommanderGroupState& State = GroupStates.AddDefaulted_GetRef();
+		State.GroupId = GroupId;
+		State.TeamId = Group->TeamID;
+		const bool bCommandAvailable = !Group->HasCurrentCommand()
+			|| IsCommandStatusTerminal(Group->GetCurrentCommand().Status);
+		State.bIsAvailable = !GroupId.IsNone()
+			&& IsValid(Group->Leader)
+			&& Group->Leader->HealthComponent
+			&& !Group->Leader->HealthComponent->IsDead()
+			&& bCommandAvailable;
+	}
+
+	for (int32 Index = 0;
+		Index < PendingOperationalObjectives.Num();
+		++Index)
+	{
+		const FScenarioOperationalObjective& Definition =
+			PendingOperationalObjectives[Index];
+		FOperationalFact AreaSecuredFact;
+		const EScenarioOperationalObjectiveReadiness Readiness =
+			FScenarioOperationalObjectiveEvaluator::Evaluate(
+				Definition,
+				CommanderRunId,
+				TeamMemory->GetFactsForTeam(Definition.TeamId),
+				AreaSecuredFact);
+		if (Readiness
+			== EScenarioOperationalObjectiveReadiness::WaitingForFacts)
+		{
+			continue;
+		}
+		if (Readiness
+			== EScenarioOperationalObjectiveReadiness::InvalidInput)
+		{
+			UE_LOG(LogScenarioInitializer, Error,
+				TEXT("[Scenario] Operational Objective '%s' became invalid."),
+				*Definition.ObjectiveId.ToString());
+			PendingOperationalObjectives.RemoveAt(Index--);
+			continue;
+		}
+
+		FOperationalObjective Objective;
+		FText ObjectiveError;
+		if (!BuildMaintainAreaControlObjective(
+			FGuid::NewGuid(),
+			Definition.ObjectiveId,
+			Definition.Priority,
+			AreaSecuredFact,
+			Objective,
+			ObjectiveError))
+		{
+			UE_LOG(LogScenarioInitializer, Error,
+				TEXT("[Scenario] Operational Objective '%s' activation failed: %s"),
+				*Definition.ObjectiveId.ToString(),
+				*ObjectiveError.ToString());
+			PendingOperationalObjectives.RemoveAt(Index--);
+			continue;
+		}
+
+		const FCommanderPlanningResult Plan = FCommanderPlanner::Plan(
+			Objective, GroupStates, FGuid::NewGuid(), TEXT("HQ"));
+		if (Plan.Outcome == ECommanderPlanningOutcome::NoAvailableGroup)
+		{
+			continue;
+		}
+		if (!Plan.IsSuccess())
+		{
+			UE_LOG(LogScenarioInitializer, Error,
+				TEXT("[Scenario] Commander could not plan Objective '%s'."),
+				*Definition.ObjectiveId.ToString());
+			PendingOperationalObjectives.RemoveAt(Index--);
+			continue;
+		}
+
+		AGroupManagerActor* const* GroupPtr =
+			GroupsById.Find(Plan.Command.AssignedGroupId);
+		AGroupManagerActor* Group = GroupPtr ? *GroupPtr : nullptr;
+		if (!IsValid(Group))
+		{
+			PendingOperationalObjectives.RemoveAt(Index--);
+			continue;
+		}
+		if (Group->HasCurrentCommand()
+			&& !Group->ClearCurrentCommand())
+		{
+			continue;
+		}
+
+		const bool bStarted = StartScenarioCommand(
+			Plan.Command,
+			Group,
+			CommanderRunId,
+			ExecutionLog,
+			TEXT("Commander Order"));
+		if (bStarted)
+		{
+			UE_LOG(LogScenarioInitializer, Display,
+				TEXT("[Scenario] Commander Objective planned. Objective:%s Group:%s Command:%s"),
+				*Objective.ObjectiveId.ToString(),
+				*Plan.Command.AssignedGroupId.ToString(),
+				*Plan.Command.CommandId.ToString(EGuidFormats::DigitsWithHyphens));
+		}
+		else
+		{
+			UE_LOG(LogScenarioInitializer, Error,
+				TEXT("[Scenario] Commander Objective failed. Objective:%s Group:%s Command:%s"),
+				*Objective.ObjectiveId.ToString(),
+				*Plan.Command.AssignedGroupId.ToString(),
+				*Plan.Command.CommandId.ToString(EGuidFormats::DigitsWithHyphens));
+			continue;
+		}
+		PendingOperationalObjectives.RemoveAt(Index--);
+	}
+
+	if (PendingOperationalObjectives.IsEmpty())
+	{
+		StopCommanderObjectiveMonitoring();
+	}
+}
+
+void AScenarioInitializer::StopCommanderObjectiveMonitoring()
+{
+	if (GetWorld())
+	{
+		GetWorldTimerManager().ClearTimer(CommanderEvaluationTimer);
+	}
+	PendingOperationalObjectives.Reset();
+	CommanderRunId.Invalidate();
 }
 
 #undef LOCTEXT_NAMESPACE

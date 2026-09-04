@@ -3,6 +3,7 @@
 #include "AIController.h"
 #include "AI/AreaControlEvaluator.h"
 #include "AI/CommandExecutionMonitor.h"
+#include "AI/DefendPositionWorldAdapter.h"
 #include "AI/OperationalTypes.h"
 #include "AI/ReconMissionWorldAdapter.h"
 #include "AI/SecureAreaWorldAdapter.h"
@@ -588,6 +589,26 @@ FGroupMissionDispatchResult AGroupManagerActor::DispatchCurrentMissionForRun(
 			*Mission.ObjectiveId.ToString(),
 			*Mission.ObjectiveLocation.ToCompactString(),
 			ObjectiveAreaRadius);
+	}
+	else if (CurrentCommand.Verb == ECommandVerb::Defend)
+	{
+		const FDefendPositionWorldResult WorldResult =
+			FDefendPositionWorldAdapter::Resolve(
+				GetWorld(), CurrentCommand,
+				Leader->GetActorLocation(), Leader);
+		if (!WorldResult.IsSuccess())
+		{
+			return GroupCommand::MakeDispatchResult(
+				EGroupMissionDispatchOutcome::WorldResolutionFailed,
+				TEXT("The assigned Defend Position mission could not be resolved in the World."),
+				Recipients.Num());
+		}
+		Mission = WorldResult.Resolution.Mission;
+		UE_LOG(LogTemp, Display,
+			TEXT("[Group:%s] Defend Mission resolved. Subject:%s Location:%s"),
+			*GroupID,
+			*Mission.ObjectiveId.ToString(),
+			*Mission.ObjectiveLocation.ToCompactString());
 	}
 	else
 	{

@@ -69,6 +69,11 @@ bool UScenarioDefinition::IsDefinitionValid(FText& OutError) const
 	{
 		return false;
 	}
+	TArray<FScenarioOperationalObjective> ValidatedObjectives;
+	if (!BuildOperationalObjectives(ValidatedObjectives, OutError))
+	{
+		return false;
+	}
 
 	OutError = FText::GetEmpty();
 	return true;
@@ -178,6 +183,101 @@ bool UScenarioDefinition::BuildFollowUpOrders(
 		Order.Command = MoveTemp(RuntimeCommand);
 
 		OutOrders.Add(MoveTemp(Order));
+	}
+
+	OutError = FText::GetEmpty();
+	return true;
+}
+
+bool UScenarioDefinition::BuildOperationalObjectives(
+	TArray<FScenarioOperationalObjective>& OutObjectives,
+	FText& OutError) const
+{
+	OutObjectives.Reset();
+	OutObjectives.Reserve(OperationalObjectives.Num());
+	TSet<FName> ObjectiveIds;
+
+	for (int32 Index = 0; Index < OperationalObjectives.Num(); ++Index)
+	{
+		const FScenarioOperationalObjective& Objective =
+			OperationalObjectives[Index];
+		if (Objective.ObjectiveId.IsNone()
+			|| Objective.DesiredStateId
+				!= OperationalObjectiveStates::MaintainAreaControl
+			|| Objective.SubjectId.IsNone()
+			|| Objective.Priority < 0
+			|| Objective.Priority > 100
+			|| Objective.ActivationFacts.IsEmpty())
+		{
+			OutError = FText::Format(
+				LOCTEXT(
+					"InvalidOperationalObjective",
+					"Operational Objective {0} has invalid identity, state, subject, priority, or activation Facts."),
+				FText::AsNumber(Index + 1));
+			OutObjectives.Reset();
+			return false;
+		}
+		if (ObjectiveIds.Contains(Objective.ObjectiveId))
+		{
+			OutError = FText::Format(
+				LOCTEXT(
+					"DuplicateOperationalObjective",
+					"Operational Objective ID '{0}' is duplicated."),
+				FText::FromName(Objective.ObjectiveId));
+			OutObjectives.Reset();
+			return false;
+		}
+
+		bool bHasAreaSecuredActivation = false;
+		TSet<FString> UniqueConditions;
+		for (const FScenarioFactCondition& Condition
+			: Objective.ActivationFacts)
+		{
+			if (Condition.PredicateId.IsNone()
+				|| Condition.SubjectId.IsNone())
+			{
+				OutError = FText::Format(
+					LOCTEXT(
+						"InvalidObjectiveCondition",
+						"Operational Objective {0} has an invalid activation Fact."),
+					FText::AsNumber(Index + 1));
+				OutObjectives.Reset();
+				return false;
+			}
+
+			const FString ConditionKey = FString::Printf(
+				TEXT("%s|%s|%s"),
+				*Condition.PredicateId.ToString(),
+				*Condition.SubjectId.ToString(),
+				*Condition.SourceGroupId.ToString());
+			if (UniqueConditions.Contains(ConditionKey))
+			{
+				OutError = FText::Format(
+					LOCTEXT(
+						"DuplicateObjectiveCondition",
+						"Operational Objective {0} contains a duplicate activation Fact."),
+					FText::AsNumber(Index + 1));
+				OutObjectives.Reset();
+				return false;
+			}
+			UniqueConditions.Add(ConditionKey);
+			bHasAreaSecuredActivation |=
+				Condition.PredicateId == OperationalPredicates::AreaSecured
+				&& Condition.SubjectId == Objective.SubjectId;
+		}
+		if (!bHasAreaSecuredActivation)
+		{
+			OutError = FText::Format(
+				LOCTEXT(
+					"MissingAreaSecuredActivation",
+					"Maintain Area Control Objective {0} requires an AreaSecured Fact for its subject."),
+				FText::AsNumber(Index + 1));
+			OutObjectives.Reset();
+			return false;
+		}
+
+		ObjectiveIds.Add(Objective.ObjectiveId);
+		OutObjectives.Add(Objective);
 	}
 
 	OutError = FText::GetEmpty();

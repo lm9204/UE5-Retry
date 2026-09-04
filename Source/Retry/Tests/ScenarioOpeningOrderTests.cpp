@@ -40,6 +40,55 @@ namespace ScenarioOpeningOrderTests
 		Condition.SubjectId = TEXT("ReconArea_A");
 		return FollowUp;
 	}
+
+	FScenarioOperationalObjective MakeOperationalObjective()
+	{
+		FScenarioOperationalObjective Objective;
+		Objective.ObjectiveId = TEXT("HoldReconArea");
+		Objective.DesiredStateId =
+			OperationalObjectiveStates::MaintainAreaControl;
+		Objective.SubjectId = TEXT("ReconArea_A");
+		Objective.TeamId = 1;
+		Objective.Priority = 80;
+		FScenarioFactCondition& Condition =
+			Objective.ActivationFacts.AddDefaulted_GetRef();
+		Condition.PredicateId = OperationalPredicates::AreaSecured;
+		Condition.SubjectId = TEXT("ReconArea_A");
+		return Objective;
+	}
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FScenarioOperationalObjectivesValidateSchema,
+	"Retry.Scenario.OperationalObjectives.ValidatesSchema",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FScenarioOperationalObjectivesValidateSchema::RunTest(
+	const FString& Parameters)
+{
+	UScenarioDefinition* Definition =
+		ScenarioOpeningOrderTests::MakeDefinition();
+	Definition->OperationalObjectives.Add(
+		ScenarioOpeningOrderTests::MakeOperationalObjective());
+
+	TArray<FScenarioOperationalObjective> Objectives;
+	FText Error;
+	TestTrue(TEXT("A supported Objective with AreaSecured activation builds."),
+		Definition->BuildOperationalObjectives(Objectives, Error));
+	TestEqual(TEXT("The authored Objective is preserved."),
+		Objectives.Num(), 1);
+
+	FScenarioOperationalObjective Invalid =
+		ScenarioOpeningOrderTests::MakeOperationalObjective();
+	Invalid.ActivationFacts[0].PredicateId =
+		OperationalPredicates::AreaObserved;
+	Definition->OperationalObjectives.Reset();
+	Definition->OperationalObjectives.Add(Invalid);
+	TestFalse(TEXT("Maintain Control requires AreaSecured activation."),
+		Definition->BuildOperationalObjectives(Objectives, Error));
+	TestFalse(TEXT("Definition validation includes Operational Objectives."),
+		Definition->IsDefinitionValid(Error));
+	return true;
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(

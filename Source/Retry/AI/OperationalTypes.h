@@ -4,6 +4,12 @@
 #include "AI/CommandTypes.h"
 #include "OperationalTypes.generated.h"
 
+namespace OperationalPredicates
+{
+	extern const FName AreaObserved;
+	extern const FName AreaSecured;
+}
+
 UENUM(BlueprintType)
 enum class EOperationalReportStatus : uint8
 {
