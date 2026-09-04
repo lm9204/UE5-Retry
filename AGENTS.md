@@ -60,6 +60,16 @@ For multi-step tasks, state a brief plan:
 
 Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
 
+## 5. Agent 기준 문서와 설계 결정 기록
+
+- 작업 시작 시 `Docs/LLM_Command_System_Docs/Generated/BASELINE_STATUS.md`를 먼저 읽고 `git status --short`와 최근 커밋으로 최신성을 확인한다.
+- 모든 설계 문서를 처음부터 읽지 않는다. 현재 작업에 필요한 상세 문서만 `Docs/LLM_Command_System_Docs/README.md`의 routing 표에 따라 조회한다.
+- 진행 상태와 다음 우선순위의 단일 최신 기준은 `BASELINE_STATUS.md`다. 같은 상태를 여러 문서에 반복 기록하지 않는다.
+- 기능 배치 종료 시 `Code Complete`, `Automated Verified`, `Integrated Complete`를 구분해 기준 문서의 상태와 작업 일지를 갱신한다.
+- 사용자가 tradeoff를 비교해 방향을 선택하면 구현 전에 가장 중요한 선택 이유, 감수하는 단점, 결정을 다시 검토할 조건을 확인한다.
+- 확인한 설계 결정은 `BASELINE_STATUS.md`의 Agent 작업 일지에 날짜별로 기록한다.
+- 새 문서는 기존 문서로 수용할 수 없을 때만 만든다.
+
 ---
 
 **These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
@@ -171,7 +181,9 @@ Unreal MCP를 사용하는 작업은 에디터 상태를 변경할 수 있다. �
   - 사용자 실습 후보
   - 검증 방법
   - 새 용어 정리
-- `IMPLEMENTATION_PLAN.md`는 기술적 구현 기준 문서로 유지하고, `LEARNING_GUIDE.md`에서 같은 내용을 쉬운 언어로 연결한다.
+- `BASELINE_STATUS.md`를 현재 상태와 다음 작업의 단일 기준으로 유지한다.
+- `IMPLEMENTATION_PLAN.md`는 과거 Phase의 기술 상세와 테스트 근거, `LEARNING_GUIDE.md`는 사용자용 쉬운 설명으로 유지한다.
+- 일상적인 상태를 세 문서에 반복 추가하지 않고, 상세 문서는 새 영구 근거나 학습 설명이 생긴 경우에만 갱신한다.
 
 ### 6. 구현 중 설명과 완료 보고
 

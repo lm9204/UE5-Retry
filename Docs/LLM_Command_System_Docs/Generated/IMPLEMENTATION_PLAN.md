@@ -2,7 +2,7 @@
 
 작성일: 2026-08-02 (Asia/Seoul)  
 기준: 현재 워킹트리, `BASELINE_STATUS.md`, `CODEBASE_FLOW_ANALYSIS.md`, Unreal MCP 검증 결과  
-상태: **Phase 5 Recon Feature Batch Code Complete / Verification Pending**
+상태: **Commander Planner Integration Complete / AI Mission Debug Asset Integrated / PIE Visual Check Pending**
 
 > 이 문서는 구현 기준을 위한 기술 문서다. 용어나 설계가 어렵다면 먼저 [`LEARNING_GUIDE.md`](LEARNING_GUIDE.md)에서 게임 화면 기준 설명과 Unreal 개념 해설을 확인한다.
 
@@ -14,6 +14,206 @@
 - 체크포인트에서 자동화 테스트 이름 전체를 실행 순서대로 제공한다. 사용자는 한 번 반영한 코드로 목록을 순차 실행한다.
 - 자동화가 모두 통과한 뒤 필요한 DataAsset/Blueprint/Level 작업과 PIE 실제 동작 검증을 한 번 수행한다.
 - 중간 대화는 구현 방향을 바꾸는 설계 결정, 안전 문제, 사용자만 수행할 수 있는 Asset schema 결정에 한정한다. 상세 개념과 실행 흐름은 이 문서와 `LEARNING_GUIDE.md`에 누적한다.
+
+## 0. 현재 우선순위와 상태 분류 — 2026-08-10
+
+이 절은 아래의 기존 Phase 상세보다 우선하는 현재 roadmap이다. 기존 Phase 기록은 당시 구현·검증 이력으로 유지한다.
+
+| 분류 | 현재 범위 |
+|---|---|
+| `Current` | Scenario 선택 UI, Scenario ID/Seed/Run Context, `Use LLM` 요청 차단 정책, 개인/그룹 LLM producer, 직렬 HTTP queue, queue generation/cancel guard, weak target 검사, 개인·그룹 Memory와 Personality prompt, Command 타입/초기 Grammar validator, Recon/Secure/Defend Mission 경로와 Team Operational Memory. 세부 통합 상태는 각 Phase 절을 따른다. |
+| `Immediate Plan` | **Cached LLM Replay**: Record/Replay, stable key, JSON 저장, version 검증, Replay miss 명시적 실패, A/B 비교 Scenario와 영상. 아직 구현되지 않았다. |
+| `Technical Spike` | 기존 Recon → Report → Secure, Operational Objective/Commander Planner, 이후 Structured LLM Command의 검증 순서. Cached Replay 외에는 기존 순서와 완료 게이트를 유지한다. |
+| `Long-term Architecture` | Dedicated Server authority, Client Local LLM Worker, distributed scheduler, same-team routing, untrusted worker validation, fan-out/hedged request. 이번 주 구현 범위가 아니다. |
+
+`Current`의 “LLM validation” 범위를 과장하지 않는다. 현재 `ULLMRequestQueue`는 outer/inner JSON을 파싱하고 target lifetime을 검사하지만 HTTP 성공 코드, 명시적 JSON Schema, 필수 필드/범위, Prompt/Schema Version을 공통 계약으로 검증하지 않는다. Structured Command의 `FCommandValidator`는 별도로 존재하지만 현재 개인/그룹 LLM response에 적용되지 않는다.
+
+### 0.1 Immediate Plan — Cached LLM Replay MVP
+
+현재 우선순위 기준: [`BASELINE_STATUS.md`](BASELINE_STATUS.md). 아래 절은 Cached Replay의 상세 구현 기록이다.
+
+목적은 성능 cache가 아니라 다음 세 가지다.
+
+```text
+Test Reproducibility
+Portfolio Comparison
+Decision Verification
+```
+
+Scenario Seed는 `FMath::RandInit`/`SRandInit`과 초기 Scenario 조건을 통제하지만 generative response를 고정하지 않는다. 따라서 Memory 또는 Personality 차이와 LLM sampling 차이를 분리하려면 검증된 응답을 Record하고 비교 Run에서 Replay해야 한다.
+
+#### 현재 코드에서 확인된 연결점
+
+| 조사 항목 | 현재 코드의 사실 | Replay 계획상 의미 |
+|---|---|---|
+| 개인 request 생성 | `ARetryNPCCharacter::OnMemoryThresholdReached`가 recent 5 Memory와 Personality로 prompt를 만들고 `FLLMRequest`를 enqueue | 개인 snapshot metadata와 stable requester ID를 request에 함께 담을 후보 |
+| 그룹 request 생성 | `AGroupManagerActor::AddGroupMemory` → `EnqueueGroupRequest`; recent 8 event와 member personality를 prompt로 구성 | Group ID, 정규화된 member/memory 입력 hash가 필요 |
+| queue / HTTP | `ULLMRequestQueue::Enqueue → ProcessNext → SendRequest`; 한 번에 한 요청 | Execution Mode 분기와 cache lookup의 최소 침습 진입점 |
+| response 처리 | `ParseAndApplyResponse`, `ParseAndApplyGroupResponse`가 parse와 실제 Personality/Order 적용을 함께 수행 | Record 전 validation과 Replay 공통 적용을 위해 parse/validated result/apply 경계를 작게 분리해야 함 |
+| generation guard | `RequestGeneration`, `ActiveRequest` 일치, reset 시 generation 증가·delegate 해제·cancel | Replay도 동일 generation/run 검사를 거쳐야 함 |
+| target lifetime | `FLLMRequest`의 weak target, 전송 전 validity, callback에서 target 재확인, 개인 대상 death 검사 | cache hit도 같은 weak/death guard를 우회하면 안 됨 |
+| Scenario generation | Restart/Return/World cleanup이 `ResetQueueForScenarioTransition()` 호출 | 현재 request에 Run ID가 저장되지는 않으므로 cache metadata와 공통 completion에서 Run ID를 명시적으로 대조할 필요가 있음 |
+| Use LLM | `FScenarioLaunchOptions::bUseLLM`, producer와 queue의 이중 차단 | `Disabled`가 Replay보다 우선한다는 기존 정책을 유지 |
+| Scenario UI | `UScenarioSelectWidget`이 `FScenarioLaunchOptions`를 편집·전달 | MVP의 Replay 선택을 추가할 기존 UI 경계. 현재 cache 상태 표시는 없음 |
+| Memory 입력 | 개인은 recent 5 `FNPCMemory.Description`, 그룹은 recent 8 `FGroupMemoryEvent`의 witness/description이 실제 prompt에 들어감 | hash는 실제 inference 입력과 같은 정규화 규칙을 사용해야 함 |
+| Personality 입력 | 개인은 5개 현재 trait와 tone, 그룹은 member별 5개 trait가 prompt에 들어감 | 별도 PersonalityInputHash 또는 전체 payload hash에 포함 |
+
+#### 실행 Mode
+
+권장 내부 상태는 모호한 bool 조합을 피하는 다음 enum이다.
+
+```cpp
+enum class ELLMExecutionMode : uint8
+{
+    Disabled,
+    Live,
+    Record,
+    Replay
+};
+```
+
+- `Disabled`: producer와 queue 모두 차단. 기존 `bUseLLM=false`와 같은 의미이며 항상 우선한다.
+- `Live`: 실제 inference 결과를 적용하되 cache 저장은 필수가 아니다.
+- `Record`: 실제 inference → validation → JSON cache 저장 → 기존 결과 적용.
+- `Replay`: cache lookup과 validation만 수행. HTTP 또는 실제 inference 호출은 금지한다.
+
+UI 변경량을 줄이기 위해 첫 MVP가 `Use LLM` + `캐시된 LLM 결과 사용`을 유지할 수는 있다. 이 경우 내부 매핑을 명시해 `Use LLM=false → Disabled`, `true/off → Record`, `true/on → Replay`로 해석하며 Live와 Record의 차이를 숨기지 않는다.
+
+#### 최소 침습 실행 경계
+
+```text
+Producer가 FLLMRequest + snapshot metadata 생성
+→ Queue가 Disabled / Live / Record / Replay 확인
+→ stable cache key 계산
+   ├─ Live / Record: 기존 PendingRequests → HTTP
+   └─ Replay: cache lookup, HTTP 생성 금지
+→ 공통 response envelope / schema / version validation
+→ 공통 generation + Run ID + weak target/death guard
+→ 기존 Personality delta 또는 Group order 적용
+```
+
+Replay 전용 Gameplay Decision이나 NPC 적용 함수를 만들지 않는다. 다만 현재 parse와 mutation이 결합되어 있으므로, 구현 시 request type별 validated result DTO와 `CompleteValidatedRequest` 같은 하나의 공통 완료 경계를 두는 최소 분리는 필요하다. Record는 이 DTO가 validation을 통과한 뒤에만 저장하고, Replay도 저장된 DTO/raw response를 같은 validation과 completion 경계로 보낸다.
+
+#### Stable Cache Key와 현재 확보 가능한 identity
+
+목표 key:
+
+```text
+ScenarioId + ScenarioVersion + Seed + RequestType
++ StableRequesterId + MemorySnapshotHash + PersonalityInputHash
++ PromptVersion + SchemaVersion + RequestOrdinal
+```
+
+현재 코드 기준 판단:
+
+- `ScenarioId`, `Seed`: `FScenarioRunContext`에서 안정적으로 확보 가능.
+- `RequestType`: 현재 `MemoryEvaluation`, `GroupCommand` 두 종류가 존재.
+- 개인 `StableRequesterId`: 배치 Scenario에서 `AScenarioInitializer`가 비어 있거나 중복된 값을 거부하는 `ARetryNPCCharacter::NPCName`이 MVP 후보.
+- 그룹 `StableRequesterId`: 같은 Initializer가 비어 있거나 중복된 값을 거부하는 `AGroupManagerActor::GroupID`가 MVP 후보.
+- `MemorySnapshotHash`: 실제 prompt에 쓰는 recent memory/event를 명시적 정규 순서와 UTF-8 직렬화 규칙으로 canonicalize한 뒤 hash. runtime timestamp, pointer, memory address는 제외한다.
+- `PersonalityInputHash`: 실제 prompt에 포함되는 trait와 tone/member 배열을 stable ID 순서로 canonicalize한 뒤 hash.
+- `PromptVersion`, `SchemaVersion`: 현재 코드에 없으므로 MVP에서 명시 상수 또는 request contract로 추가해야 한다.
+- `ScenarioVersion`: 현재 `UScenarioDefinition`에 없으므로 추가 여부를 결정해야 한다. 이번 주 최소 key에서는 생략 가능하지만 cache metadata에는 부재를 명시한다.
+- `RequestOrdinal`: 현재 `NextRequestID`는 GameInstance 전체에서 증가하고 transition 때 reset되지 않아 재현 가능한 ordinal이 아니다. Run별 `RequestType + StableRequesterId` counter가 필요하다.
+
+Actor pointer, runtime address, `FGuid::NewGuid()`로 만든 Run/Command ID, UObject `GetName()`, 현재 `RequestID`는 cache key로 사용하지 않는다. 특히 그룹 LLM response의 member 매칭은 현재 UObject `GetName()`을 사용하지만 cache requester identity는 검증된 `NPCName`/`GroupID`를 사용한다.
+
+MVP 최소 key는 다음을 확보한다.
+
+```text
+ScenarioId + Seed + RequestType + StableRequesterId
++ MemorySnapshotHash + PromptVersion + RequestOrdinal
+```
+
+Personality가 실제 prompt 입력인 현재 request에서는 충돌 방지를 위해 `PersonalityInputHash` 또는 이를 포함한 `RequestPayloadHash`도 저장·검증한다.
+
+#### JSON 저장과 validation
+
+저장 후보:
+
+```text
+Saved/LLMCache/{ScenarioId}/{Seed}/{CacheKey}.json
+```
+
+MVP cache record에는 `CacheKey`, Scenario/Seed, Requester, RequestType, RequestOrdinal, Prompt/Schema Version, Memory/Personality/Payload Hash, model/endpoint 식별 정보, validation 결과, raw response, parsed result를 포함한다. 현재 HTTP body에는 model field가 없으므로 model 정보는 server/config에서 확보되지 않으면 `Unspecified`로 명시하며 추측하지 않는다.
+
+Replay validation은 cache key 일치뿐 아니라 Scenario/Seed, request type/requester, prompt/schema version, payload hash와 JSON 구조를 확인한다. mismatch/corruption은 거부한다. 현재 parser의 optional field 추출과 최종 clamp만으로는 versioned schema validation이라고 부르지 않으므로 필수 필드, 타입, 허용 범위, group member ID와 order enum 검증을 request type별로 명시해야 한다.
+
+#### Replay 실패 정책
+
+```text
+Hit                  → 공통 validation / completion 경계
+Miss                 → 명시적 CacheMiss, LiveFallback=Blocked
+Prompt/Schema mismatch → 거부
+Corrupted JSON       → 거부
+Use LLM=false        → lookup도 하지 않고 Disabled
+```
+
+Replay에서 `SendRequest`, `FHttpModule::CreateRequest`, fallback용 live inference를 호출하지 않는다. Cache miss를 기존 dialogue fallback으로 조용히 바꾸지도 않는다. UI/로그에는 Hit, Missing, Version Mismatch, Corrupted를 구분해 표시한다.
+
+#### 이번 주 완료 조건과 제외 범위
+
+1. Scenario 시작 전에 Replay 사용 여부 선택.
+2. 실제 LLM response를 JSON으로 Record.
+3. stable key로 결과 조회.
+4. Replay HTTP/inference 호출 0건.
+5. miss 명시적 실패, live fallback 없음.
+6. Prompt/Schema mismatch 거부.
+7. 기존 generation guard와 result application 재사용.
+8. Scenario 전환 뒤 이전 결과 적용 차단.
+9. requester 제거 뒤 적용 차단.
+10. 같은 Scenario/Seed의 재현 가능한 Replay.
+11. 비교 Run A/B 구성.
+12. 영상에서 Memory 또는 Personality 차이에 따른 Decision 변화 확인.
+
+이번 주 제외: 범용 browser/editor, migration, 다중 model UI, Shipping cache packaging, 완전한 replay timeline, 모든 Scenario cache 생성.
+
+#### 테스트 계획
+
+Automation 후보:
+
+- 동일 입력 → 동일 key; Memory 또는 Personality 입력 변경 → 다른 key.
+- Record 결과 Replay → parsed result 동일.
+- Replay → HTTP request count 증가 없음.
+- Cache miss → live fallback 없음.
+- Prompt/Schema mismatch와 corrupted record 거부.
+- `Use LLM=false`가 Replay보다 우선.
+- Scenario generation/Run 변경 → stale completion 거부.
+- requester 제거/death → weak target guard로 적용 거부.
+
+PIE 후보:
+
+- 같은 Scenario/Seed에서 Replay 반복과 Hit/Miss 표시.
+- Restart/Return 뒤 이전 callback/즉시 cache completion 미적용.
+- Run A: 같은 초기 Personality, Memory 없음.
+- Run B: 같은 초기 Personality, `AllyDeath` Memory 존재.
+- overlay에 Scenario ID/Seed, 핵심 Memory, 주요 Decision Score, 최종 CombatState 또는 Mission 표시.
+
+Memory 비교가 안정화된 뒤에만 같은 Memory/다른 Personality, 같은 Operational Fact/다른 Commander Personality로 확장한다.
+
+#### 이번 주 MVP 기술 위험
+
+| 위험 | 현재 근거 | MVP 대응 방향 |
+|---|---|---|
+| stable requester가 실제로는 실행마다 달라짐 | group response는 현재 UObject `GetName()`으로 member를 매칭 | cache identity는 Initializer가 중복 검증하는 `NPCName`/`GroupID`를 사용하고 테스트에서 재실행 일치를 확인 |
+| 같은 입력의 ordinal이 Run마다 달라짐 | `NextRequestID`는 GameInstance lifetime 전역 증가값 | Run 시작 때 비우는 requester/type별 ordinal을 별도로 둠 |
+| Record가 invalid response를 저장함 | parser가 parse와 mutation을 함께 수행하고 성공 결과를 반환하지 않음 | validation/result DTO/apply를 최소 분리하고 validation 성공 뒤에만 저장 |
+| Replay가 기존 lifecycle guard를 우회함 | 현재 guard가 HTTP callback lambda에 위치 | cache hit도 공통 completion에서 generation, Run ID, weak target/death를 검사 |
+| Memory hash가 실제 prompt와 불일치 | 개인/group prompt가 서로 다른 subset과 순서를 사용 | request producer가 실제 prompt 입력과 같은 canonical snapshot metadata를 생성 |
+| prompt/schema version 부재로 오래된 cache 오사용 | 현재 version 상수가 없음 | MVP에서 명시 version을 contract에 넣고 mismatch를 hard reject |
+| HTTP 0건을 증명하기 어려움 | 현재 전송 횟수 계측 API가 없음 | test seam 또는 queue diagnostic counter를 두되 범용 telemetry framework는 만들지 않음 |
+| A/B 화면에서 원인을 설명할 정보 부족 | 현재 debug UI는 Run Context 중심 | 이번 비교에 필요한 Memory, 주요 score, 최종 State/Mission만 최소 노출 |
+
+### 0.2 Technical Spike — 기존 순서 유지
+
+- Phase 3~6의 Scenario, Command, Recon/Report/Team Memory, Secure와 Follow Up 구현·검증 기록은 그대로 유지한다.
+- Phase 6.5 Commander Planner는 핵심 Automation/Core PIE가 확인됐고 Restart/Return lifecycle PIE가 남아 있다.
+- Phase 7 Structured LLM Command는 아직 계획이다. 기존 개인/그룹 response parser가 곧 Structured Command schema라고 표현하지 않는다.
+- Cached Replay는 현재 LLM transport의 재현성을 먼저 확보하는 독립된 Immediate 배치이며, Command Grammar나 Mission Resolver의 범위를 늘리지 않는다.
+
+### 0.3 Long-term Architecture — 현재 구현 금지
+
+Dedicated Server authority와 distributed inference worker는 `01_PROJECT_GOAL.md` 1.13의 장기 목표를 따른다. 서버가 World/Memory/Command/Mission Result를 확정하고, same-team client worker는 untrusted proposed result만 반환한다. Scheduler의 fan-out, hedged request, timeout 재할당과 Simulated Worker 검증은 이번 주 MVP 및 현재 Technical Spike에 포함하지 않는다.
 
 ## 1. 확정된 설계 결정
 
@@ -636,7 +836,7 @@ PIE 통합 검증 결과(2026-08-06): `Group A Recon → AreaObserved → Group 
 Automation RunTests Retry.Scenario.LLMPolicy+Retry.Scenario.Runtime
 ```
 
-에이전트는 사용자 Live Coding 흐름을 보존하기 위해 빌드와 Automation 실행을 수행하지 않았다. 이 수정은 **Code Complete / User Verification Pending** 상태다.
+사용자가 Live Coding 후 `Retry.Scenario.LLMPolicy+Retry.Scenario.Runtime` 자동화 테스트를 모두 통과했다. `Use LLM=false` Scenario PIE에서 개인·그룹 요청을 강제로 트리거해도 Llama 요청, 응답, fallback 관련 로그가 생성되지 않았다. 이 수정은 **Automated Verification Complete / Integrated Complete** 상태다.
 
 ### 신규 파일
 
@@ -660,7 +860,102 @@ Automation RunTests Retry.Scenario.LLMPolicy+Retry.Scenario.Runtime
 - 점유 유지 시간 이전에는 완료되지 않는지 확인.
 - 그룹 전투력, no path, timeout, cancel을 서로 다른 failure code로 기록.
 
-## 8. Phase 7 — Structured LLM Command
+## 8. Phase 6.5 — Operational Objective와 Commander Planner 기준선
+
+### 기능 배치 구현 상태 — Maintain Area Control → Defend Position
+
+2026-08-10 코드 구현과 검색 기반 정적 검사를 완료했다. 이후 사용자가 전체 기능 체크포인트 Automation을 실행해 모두 통과했다. PIE에서 Group A에 Patrol Point가 등록된 상태에서도 `AreaSecured → MaintainAreaControl → Defend`가 일반 Patrol보다 우선하여 목표 지역을 지속 방어하는 것을 확인했다. Restart와 Return에서도 새 Run 분리, Commander timer 정리, 이전 Defend Mission 제거와 로그가 모두 정상임을 확인하여 이 배치는 **Integration Complete** 상태다.
+
+이 배치는 Fact, Operational Objective, Command의 책임을 분리한다.
+
+- `AreaSecured`는 Team Operational Memory가 알고 있는 전장 사실이다. 이 Fact 자체가 방어 의도를 만들지는 않는다.
+- Scenario Definition의 `MaintainAreaControl` Objective는 HQ가 유지하려는 상태다. `AreaSecured` Fact는 이 목표의 활성화 조건이다.
+- `FCommanderPlanner`는 활성 Objective와 현재 그룹 가용성을 받아 `Defend + Position` Command를 만든다.
+- Planner는 같은 팀의 살아 있고 명령 가능한 그룹만 후보로 사용한다. 후보가 여러 개면 Group ID 오름차순으로 선택하여 같은 입력에서 같은 결과를 만든다.
+- Position은 LLM이나 임의 좌표가 아니라 수신된 `AreaSecured` Fact의 위치에서 온다.
+- `FDefendPositionWorldAdapter`가 이 위치를 NavMesh에 투영하고 leader 시작점에서 완전한 path가 있는지 다시 검사한다.
+- Defend는 자동 완료되지 않는 지속 Mission이다. 새 계획, 명시적 취소, Restart/Return이 끝낼 때까지 `Executing`을 유지한다.
+- `Advance`, `Regroup`, 방어 완료/재계획 정책, personality 기반 후보 점수는 이번 배치에 포함하지 않는다.
+
+실행 흐름:
+
+```text
+Scenario Definition MaintainAreaControl Objective
+→ AreaSecured Fact를 기다림
+→ Runtime FOperationalObjective 활성화
+→ Commander Planner가 friendly available group 선택
+→ Proposed Defend + Position Command
+→ 기존 validation / Group authority / assignment
+→ DefendPositionWorldAdapter Nav 투영·path 검사
+→ Mission Resolver
+→ 전원 원자 dispatch
+→ 지속 Defend Mission Executing
+```
+
+신규 코드:
+
+- `AI/OperationalObjectiveTypes`: 런타임 목표와 `AreaSecured → MaintainAreaControl` 변환
+- `AI/CommanderPlanner`: 결정적 그룹 선택과 Structured Command 생성
+- `AI/DefendPositionWorldAdapter`: 신뢰된 Fact 위치의 Nav 실행 좌표 변환
+- `Scenario/ScenarioOperationalObjectiveEvaluator`: Team/Run/Fact 활성화 gate
+
+수정 코드:
+
+- `ScenarioDefinition`: 디자이너 작성 Operational Objective schema와 validation
+- `ScenarioInitializer`: Objective 감시, Planner 호출, 기존 명령 실행 경계 연결과 수명 정리
+- `MissionResolver`, `GroupManagerActor`: `Defend + Position` 실행 지원
+- `OperationalTypes`: 공통 operational predicate 이름 공개
+
+자동화 체크포인트:
+
+```text
+Automation RunTests Retry.Operational.Objective+Retry.Commander.Planner+Retry.Scenario.OperationalObjectives+Retry.Mission.Resolver+Retry.Mission.DefendWorldAdapter+Retry.Mission.GroupDispatch
+```
+
+### Phase 6.5 후속 개선 — AI Mission Debug Snapshot
+
+사용자 PIE 검증에서 기존 `WBP_AIDebug`가 `CombatState`와 utility score만 표시하여, CombatState 밖의 Mission branch와 Blackboard 투영 상태를 진단할 수 없는 관측성 공백을 확인했다.
+
+CombatState와 Mission은 하나의 enum으로 합치지 않는다. CombatState는 현재 전술 반응이고 Mission은 지속되는 상위 실행 목표라 동시에 존재할 수 있기 때문이다.
+
+```text
+Command: Defend / Executing
+Mission: ReconArea_A / Target Location
+CombatState: TakeCover
+Mission Gate: Suspended by combat
+Blackboard Sync: OK
+```
+
+- `FAIMissionDebugSnapshot`은 현재 Group Command, Decision Component의 권위 Mission, Blackboard의 `MissionTargetLocation`과 `bMissionMovementAllowed` 투영을 한 프레임에서 비교한다.
+- 기존 `UpdateDebugInfo` Blueprint event는 변경하지 않는다. `Update Mission Debug Info` event를 별도로 추가하여 기존 `WBP_AIDebug` 그래프를 보존한다.
+- `bCommandMatchesMission`은 Group Command ID와 Mission Command ID의 일치를 표시한다.
+- `bBlackboardSynchronized`는 Mission target/gate와 Blackboard target/gate의 일치를 표시한다.
+- 실제 활성 BT node 표시는 Behavior Tree Debugger의 책임으로 유지한다.
+- reflected `USTRUCT`와 `UFUNCTION` 추가이므로 Live Coding 대신 Editor 종료 후 사용자 주도 전체 `RetryEditor` 빌드가 필요하다.
+
+2026-08-10 통합 상태:
+
+- 사용자가 `Retry.Debug.AI` 자동화 테스트 3개 전부 통과를 확인했다.
+- `/Game/UI/WBP_AIDebug`에 기존 CombatState/utility 표시를 보존한 채 `CommandText`, `MissionText`, `MissionGateText`, `MissionSyncText`를 추가하고 저장했다.
+- `Update Mission Debug Info`에서 Snapshot을 분해하여 Command verb/status/ID 앞 8자, Mission Objective/target, movement gate를 갱신한다.
+- Command 또는 Mission이 없으면 각각 `None`을 표시한다.
+- 두 sync가 모두 true일 때 Sync 행은 초록색, 하나라도 false이면 빨간색으로 표시한다.
+- Blueprint와 Widget Blueprint 컴파일은 warnings-as-errors 조건에서 통과했다. 남은 작업은 PIE 화면에서 실제 값과 색 전환을 확인하는 것이다.
+- 기존 `StateText`, `AmmoText`, `ScoreAC`, `ScoreRRI`, `TargetText`도 신규 Mission 행과 동일한 18pt Bold, 검은 그림자, 1px 세로 간격으로 통일했다. 전술 점수는 청록/주황, target은 Mission과 같은 노란 계열을 사용해 정보 종류를 색으로 구분한다.
+- NPC 머리 위에서 여러 Debug Widget을 동시에 읽기 쉽도록 루트를 2열 HorizontalBox 구조로 변경했다. 왼쪽 Combat 열은 State/HP/Ammo/utility score, 오른쪽 Mission 열은 Target/Command/Mission/Gate/Sync를 소유하며 열 사이에는 24px 간격을 둔다.
+- 기존 `HPBar` ProgressBar는 `HPText`로 교체했다. `Update Debug Info`의 `HPRatio`를 `MapRangeClamped(0..1 → 0..100)`로 변환하고 소수점 없는 `HP: N%` 텍스트로 갱신한다.
+- 동적 이름·좌표가 Widget의 가로 폭을 계속 키우지 않도록 Combat 열은 210px, Mission 열은 290px `SizeBox`로 제한한다. 모든 TextBlock은 한 줄 `Ellipsis`와 bounds clipping을 사용하며 전체 폭은 열 간격을 포함해 약 524px로 고정한다.
+- Mission 표시는 `Cmd`, `Obj`, `Gate`, `Sync C-M`, `M-BB` 축약 라벨을 사용해 제한된 폭에서 실제 상태 값이 먼저 보이게 한다.
+- Combat State는 전체 enum 경로인 `ENPCCombatState::TakeCover` 대신 짧은 enumerator 이름인 `TakeCover`만 `WBP_AIDebug`에 전달한다. 상태 전환 로그의 전체 이름은 기존대로 유지한다.
+- A/C/R/Rl utility score는 계산 정밀도는 유지하고 UI 변환에서만 최대 소수점 2자리, 최소 소수점 0자리로 표시한다. 따라서 `1`, `1.5`, `1.23` 형태를 사용하며 불필요한 후행 0과 긴 소수 문자열을 제거한다.
+
+자동화 체크포인트:
+
+```text
+Automation RunTests Retry.Debug.AI
+```
+
+## 9. Phase 7 — Structured LLM Command
 
 Phase 5와 6이 하드코딩 명령으로 Integrated Complete가 된 뒤에만 시작한다.
 
@@ -678,7 +973,7 @@ Phase 5와 6이 하드코딩 명령으로 Integrated Complete가 된 뒤에만 �
 - timeout과 late callback이 같은 요청을 두 번 완료하지 못하게 한다.
 - 실패 시 대사 fallback이 아니라 별도 doctrine command fallback을 사용한다.
 
-## 9. 기존 시스템 재사용 요약
+## 10. 기존 시스템 재사용 요약
 
 | 기존 시스템 | 재사용 방식 |
 |---|---|
@@ -693,7 +988,7 @@ Phase 5와 6이 하드코딩 명령으로 Integrated Complete가 된 뒤에만 �
 | `ULLMRequestQueue` | Phase 7 transport 재사용, Phase 3에서 lifecycle 안전성 먼저 보강 |
 | `ARetryPlayerController` UI 관례 | Widget 생성 관례만 참고; Scenario 메뉴는 별도 menu controller/widget로 격리 |
 
-## 10. 공통 검증 게이트
+## 11. 공통 검증 게이트
 
 각 기능 배치는 다음 순서로 종료한다.
 
@@ -723,7 +1018,7 @@ Phase 3은 추가로 Game target 및 등록 map cook/package 검증을 완료 �
 - 에디터가 저장한 ini 변경은 결과물로 받아들이되, 에이전트가 텍스트를 대신 작성하는 것은 사용자가 명시적으로 요청한 경우에만 수행한다.
 - C++에서 custom collision channel 번호를 사용할 때는 사용자가 에디터에서 생성한 실제 `GameTraceChannel` 번호를 먼저 확인하고 일치시킨다.
 
-## 11. 롤백 전략
+## 12. 롤백 전략
 
 - 새 기능은 `Scenario`, `Command`, `MissionContext`가 없으면 기존 AI 경로가 그대로 실행되도록 optional하게 추가한다.
 - `UNPCDecisionComponent::ClearMissionContext()`는 모든 overlay를 제거하고 기존 `ENPCOrder`/utility 동작으로 복귀시킨다.
@@ -733,7 +1028,7 @@ Phase 3은 추가로 Game target 및 등록 map cook/package 검증을 완료 �
 - `ULLMRequestQueue` lifecycle 보강은 기존 dialogue/group request public API를 보존한다.
 - 사용자 dirty worktree의 기존 변경과 새 Phase 변경을 파일 단위로 구분하며, 되돌릴 때 unrelated 변경을 건드리지 않는다.
 
-## 12. 위험과 대응
+## 13. 위험과 대응
 
 | 위험 | 대응 |
 |---|---|
@@ -746,7 +1041,7 @@ Phase 3은 추가로 Game target 및 등록 map cook/package 검증을 완료 �
 | 레벨 고정 배치가 Scenario DataAsset 값과 불일치 | `ValidateScenarioSetup()`로 ID/team/reference 중복·누락 진단 |
 | package에서 soft level 누락 | Primary Asset/registered soft reference와 cook/package test로 검증 |
 
-## 13. 아직 결정하지 않은 항목과 질문 게이트
+## 14. 아직 결정하지 않은 항목과 질문 게이트
 
 아래 항목은 현재 Phase 2 아키텍처나 Phase 3 구현을 막지 않으므로 해당 Phase 시작 직전에 결정한다. Codex는 임의로 확정하지 않고 사용자에게 질문한다.
 
@@ -757,7 +1052,7 @@ Phase 3은 추가로 Game target 및 등록 map cook/package 검증을 완료 �
 5. **로그 export 형식과 위치**: JSON Lines, 단일 JSON, CSV 중 선택 및 저장 경로.
 7. **Editor Startup Map 변경 여부**: Game Default Map은 메뉴로 변경하되 에디터 시작도 메뉴로 바꿀지는 통합 시 확인.
 
-## 14. Phase 2 완료 체크리스트
+## 15. Phase 2 완료 체크리스트
 
 - [x] 실제 클래스명과 파일명을 사용했다.
 - [x] 신규 파일과 수정 파일을 구분했다.
@@ -769,8 +1064,8 @@ Phase 3은 추가로 Game target 및 등록 map cook/package 검증을 완료 �
 - [x] 현재 결정된 항목과 후속 질문 게이트를 구분했다.
 - [x] 게임 로직, 설정, Blueprint, `.uasset`은 수정하지 않았다.
 
-## 15. Phase 2 판정
+## 16. Phase 2 판정
 
-**Phase 2 Complete / Phase 3 Ready / Implementation Not Started**
+**역사적 Phase 2 판정: Phase 2 Complete / Phase 3 Ready / 당시 Implementation Not Started**
 
-Phase 3 시작 시에는 먼저 신규/수정 예정 파일, 예상 위험, 검증 방법을 다시 제시하고, 13절의 Phase 3 UI 세부 구성 중 구현에 필요한 선택을 사용자에게 확인한다.
+이 절은 2026-08-02 당시 Phase 2 종료 기록이다. 현재 상태와 다음 우선순위는 이 문서 0절을 따른다. Phase 3 이후의 실제 구현·통합 결과는 각 Phase의 `구현 상태`와 `EDITOR_ACTIONS.md`에 기록되어 있다.

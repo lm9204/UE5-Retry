@@ -1770,4 +1770,129 @@ Automation RunTests Retry.Scenario.LLMPolicy+Retry.Scenario.Runtime
 3. 기존 Recon → Follow Up Secure → 전투 후 완료 흐름은 그대로 수행되는지 확인한다.
 4. 필요하면 `Use LLM`을 켠 별도 실행에서 요청이 다시 허용되는지 대조한다.
 
+## Phase 6.5 — Operational Objective와 Commander Planner 체크포인트
+
+### 1. 코드 반영과 자동화
+
+Live Coding을 한 번 수행한 뒤 다음 명령을 한 줄로 실행한다.
+
+```text
+Automation RunTests Retry.Operational.Objective+Retry.Commander.Planner+Retry.Scenario.OperationalObjectives+Retry.Mission.Resolver+Retry.Mission.DefendWorldAdapter+Retry.Mission.GroupDispatch
+```
+
+확인할 신규 세부 테스트:
+
+- `Retry.Operational.Objective.BuildsMaintainControl`
+- `Retry.Operational.Objective.RejectsWrongSourceFact`
+- `Retry.Commander.Planner.BuildsDefendCommand`
+- `Retry.Commander.Planner.RequiresAvailableFriendlyGroup`
+- `Retry.Scenario.OperationalObjectives.ValidatesSchema`
+- `Retry.Scenario.OperationalObjectives.WaitsForMatchingFact`
+- `Retry.Scenario.OperationalObjectives.ActivatesFromAreaSecured`
+- `Retry.Mission.Resolver.BuildsDefendPositionMission`
+- `Retry.Mission.DefendWorldAdapter.ResolvesProjectedTarget`
+- `Retry.Mission.DefendWorldAdapter.RejectsWorldFailures`
+- `Retry.Mission.GroupDispatch.KeepsDefendMissionExecuting`
+
+### 2. Scenario Definition 목표 입력
+
+자동화가 모두 통과한 뒤 `/Game/Scenarios/Definitions/DA_TS_ReconSecure_001`을 열고 `Operational Objectives`에 한 항목을 추가한다.
+
+```text
+Objective Id: HoldReconArea_A
+Desired State Id: MaintainAreaControl
+Subject Id: ReconArea_A
+Team Id: 1
+Priority: 80
+
+Activation Facts[0]
+  Predicate Id: AreaSecured
+  Subject Id: ReconArea_A
+  Source Group Id: A
+```
+
+기존 Opening Recon과 `AreaObserved → Secure` Follow Up은 그대로 유지한다. 이 Objective에는 Command나 Assigned Group을 직접 작성하지 않는다. 그룹 선택은 Commander Planner의 책임이다.
+
+### 3. PIE 통합 검증
+
+1. Scenario 시작 직후 `Commander objective monitoring started ... Pending:1`을 확인한다.
+2. `AreaSecured` 전에는 Commander Order와 Defend Mission 로그가 없어야 한다.
+3. 기존 `Recon → Follow Up Secure → AreaSecured` 흐름을 완료한다.
+4. 아래 로그가 한 번씩 나타나는지 확인한다.
+
+```text
+[Group:A] Defend Mission resolved. Subject:ReconArea_A Location:...
+[Scenario] Commander Order executing. Group:A Command:... Recipients:2
+[Scenario] Commander Objective planned. Objective:HoldReconArea_A Group:A Command:...
+```
+
+5. Group A의 Command가 `Executing`을 유지하고 확보 위치를 Mission target으로 사용하는지 확인한다.
+6. 적과 조우하면 기존 Alert/전투가 우선하고, 교전이 끝난 뒤 방어 위치로 복귀하는지 확인한다.
+7. Restart에서는 새 Run/Command ID로 같은 흐름이 다시 시작하고 이전 Run Fact가 즉시 목표를 활성화하지 않아야 한다.
+8. Return과 PIE 종료 후 Commander timer, 이전 Defend Mission, stale Run 로그가 남지 않아야 한다.
+
+이번 배치에서 Defend는 지속 Mission이다. 일정 시간이 지나도 Completed로 바뀌지 않는 것이 정상이며, 취소와 재계획 정책은 다음 기능 배치에서 다룬다.
+
+검증 결과(2026-08-10): 위 기능 체크포인트 Automation이 모두 통과했다. Group A에 Patrol Point를 등록한 PIE에서도 `AreaSecured` 이후 Defend Mission이 일반 Patrol보다 우선하여 목표 지역을 지속 방어했다. Restart/Return에서 새 Run 재활성화, 이전 Commander timer와 Defend Mission 정리, 관련 로그까지 모두 정상 동작해 이 체크포인트를 통합 완료했다.
+
+## AI Mission Debug Snapshot 체크포인트
+
+### 1. 전체 Editor 빌드
+
+이번 변경은 `FAIMissionDebugSnapshot` USTRUCT와 `Update Mission Debug Info` Blueprint event를 추가한다. Live Coding으로 반영하지 않는다.
+
+1. `WBP_AIDebug`을 저장하지 않은 상태로 Unreal Editor를 종료한다.
+2. 사용자 주도로 `RetryEditor Win64 Development` 전체 빌드를 수행한다.
+3. 빌드 성공 후 Editor를 다시 연다.
+4. 기존 `Update Debug Info` event와 UI가 그대로 남아 있는지 먼저 확인한다.
+
+### 2. 자동화
+
+```text
+Automation RunTests Retry.Debug.AI
+```
+
+세 테스트가 모두 통과해야 한다.
+
+- `Retry.Debug.AI.Snapshot.ReportsSynchronizedMission`
+- `Retry.Debug.AI.Snapshot.DistinguishesCombatSuspension`
+- `Retry.Debug.AI.Snapshot.DetectsProjectionMismatch`
+
+### 3. `WBP_AIDebug` 표시 연결
+
+구현 결과(2026-08-10): Codex가 `/Game/UI/WBP_AIDebug`에 아래 표시 행과 `Update Mission Debug Info` 그래프를 직접 추가하고 저장했다. 기존 `Update Debug Info`, CombatState, HP/Ammo, utility score, target 표시는 유지했으며 Blueprint/UMG 컴파일도 통과했다. 따라서 이 절의 수동 위젯·그래프 작업은 완료되었고 사용자는 수행할 필요가 없다.
+
+추가 스타일 정리(2026-08-10): 기존 CombatState/Ammo/utility/Target 텍스트도 신규 Mission 행과 같은 18pt Bold, 검은 그림자, 촘촘한 간격으로 통일했다. 기존 런타임 텍스트 갱신 그래프는 변경하지 않았다.
+
+추가 레이아웃 정리(2026-08-10): 세로 1열을 Combat/Mission 2열 표 형태로 변경했고 `HPBar`를 정수 퍼센트 `HPText`로 교체했다. `HPRatio` 0~1 입력을 0~100으로 변환하는 Blueprint 그래프까지 연결했으므로 사용자의 수동 UMG 작업은 없다.
+
+추가 폭 제한(2026-08-10): Combat/Mission 열을 각각 210px/290px로 고정하고 모든 텍스트에 한 줄 말줄임표와 clipping을 적용했다. 긴 Actor 이름, Command 상태, Objective, Vector 문자열이 들어와도 Widget 전체 폭은 더 늘어나지 않는다.
+
+추가 숫자 포맷(2026-08-10): A/C/R/Rl 점수에 각각 `ToText(Float)` 변환을 연결해 최대 소수점 2자리만 표시한다. 계산 값은 변경하지 않고 화면 문자열만 반올림한다.
+
+기존 CombatState와 score 표시는 유지한다. 아래 Text 행을 추가한다.
+
+- Command: verb, status, Command ID 앞 8자
+- Mission: Objective ID와 target location
+- Mission Gate: `Movement Allowed` 또는 `Suspended (see CombatState)`
+- Sync: Command↔Mission과 Mission↔Blackboard 일치 여부
+
+Graph에서 부모의 `Event Update Mission Debug Info`를 추가하고 `Break AI Mission Debug Snapshot`으로 값을 분해한다.
+
+- `bHasCommand=false`: Command를 `None`으로 표시한다.
+- `bHasMission=false`: Mission을 `None`으로 표시한다.
+- `bCommandMatchesMission=false`: Command/Mission mismatch를 빨간색으로 표시한다.
+- `bBlackboardSynchronized=false`: Blackboard projection mismatch를 빨간색으로 표시한다.
+- 두 sync가 true면 초록색 `OK`로 표시한다.
+
+### 4. PIE 확인
+
+1. AI Debug UI를 켠다.
+2. Mission 전에는 Command/Mission이 `None`이고 Blackboard Sync가 정상인지 확인한다.
+3. Recon/Secure/Defend 중 Command verb/status, Objective ID, target이 갱신되는지 확인한다.
+4. Idle/Patrol에서는 Mission Gate와 Blackboard gate가 true인지 확인한다.
+5. 적 조우로 Attack/TakeCover 등이 되면 Mission은 유지되고 두 gate가 false, Sync는 `OK`인지 확인한다.
+6. 전투 종료 후 gate가 다시 true가 되고 Mission 위치로 복귀하는지 확인한다.
+7. Restart/Return 후 이전 Command/Mission 정보가 남지 않는지 확인한다.
+
 Codex는 빌드와 Automation을 실행하지 않았다. 사용자 검증 후 이 체크포인트를 완료로 전환한다.

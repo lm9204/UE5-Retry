@@ -8,6 +8,18 @@
 - 코드에서 확인되지 않은 가정을 문서 설계만 보고 구현하지 않는다.
 - 명령 시스템보다 먼저 LLM을 연결하지 않는다.
 
+### 현재 우선순위 예외 — Cached LLM Replay
+
+2026-08-10 현재 다음 구현 배치는 [`Generated/BASELINE_STATUS.md`](Generated/BASELINE_STATUS.md)에 정리된 **Cached LLM Replay**다. 이는 Phase 7의 Structured LLM Command 생성이나 Long-term Worker architecture를 앞당기는 작업이 아니다. 이미 존재하는 개인/그룹 LLM request의 생성형 변동을 통제하기 위한 실험 인프라다.
+
+```text
+Immediate Plan: Cached LLM Replay — 이번 주 최우선
+Technical Spike: 기존 Command / Mission / Team Memory 순서 유지
+Long-term Architecture: Multiplayer / Distributed Worker — 이번 주 제외
+```
+
+Cached Replay 완료 뒤 기존 Phase 순서로 돌아간다. 범용 Cache Framework, Multiplayer, Worker Scheduler를 이 예외에 끼워 넣지 않는다.
+
 ## 5.2 Phase 0 — 기준 상태 확인
 
 작업:

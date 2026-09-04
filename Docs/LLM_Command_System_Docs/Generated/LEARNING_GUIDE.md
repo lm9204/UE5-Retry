@@ -51,6 +51,38 @@
 
 ## 3. 전체 Phase를 게임 화면 기준으로 보기
 
+### 현재 가장 먼저 만드는 것 — Cached LLM Replay
+
+기존 Phase 순서를 없애는 것이 아니라, 이번 주에는 비교 실험의 입력을 고정하는 Cached LLM Replay를 가장 먼저 만든다. 현재는 계획 상태이며 아직 코드나 UI에 Record/Replay가 없다.
+
+Scenario Seed는 NPC 배치와 게임 random을 반복하는 도구다. 그러나 LLM은 같은 prompt에도 다른 응답을 만들 수 있다. 그래서 다음 두 실행의 차이를 해석하기 어렵다.
+
+```text
+Run A: Memory 없음
+Run B: AllyDeath Memory 있음
+```
+
+두 Run에서 LLM 응답까지 매번 달라지면 NPC 행동 차이가 Memory 때문인지 우연히 다른 생성 결과 때문인지 알 수 없다. Cached Replay는 한 번 검증한 응답을 JSON으로 기록하고, 촬영과 반복 검증에서는 그 응답만 다시 사용한다.
+
+```text
+Record: 실제 LLM → 검증 → 저장 → 기존 결과 적용
+Replay: 저장 결과 → 검증 → 기존 결과 적용 (HTTP 없음)
+```
+
+여기서 가장 중요한 개념은 **같은 결과 적용 경로**다. Replay용 NPC 판단을 따로 만들면 Live와 Replay가 서로 다른 게임이 된다. 두 경로는 schema validation, Scenario generation/Run 확인, weak target 검사, Personality/Order 적용을 공유해야 한다.
+
+Cache miss 때 몰래 Live LLM을 부르는 것도 금지한다. 그렇게 하면 비교 Run의 입력 조건이 바뀌기 때문이다. 실패를 화면과 로그에 명확히 보여 주는 것이 올바른 결과다.
+
+현재 코드에서 배울 연결점:
+
+- `FScenarioRunContext`: Scenario ID와 Seed를 제공.
+- `NPCName`, `GroupID`: 배치 Scenario에서 중복을 검사하는 stable requester 후보.
+- `ULLMRequestQueue`: 현재 HTTP queue와 generation/cancel guard가 있는 공통 경계.
+- `FLLMRequest`: 현재 prompt와 weak target을 운반하지만 version/hash/run metadata는 아직 없음.
+- `ParseAndApplyResponse` 계열: 현재 parse와 mutation이 결합되어 있어 구현 시 공통 validated-result 경계로 최소 분리가 필요.
+
+이번 주 목표는 범용 cache 제품이 아니라 같은 Scenario/Seed에서 Memory 또는 Personality 한 변수의 영향을 설명할 수 있는 A/B 비교다.
+
 | Phase | 플레이어에게 보이는 결과 | 배우는 핵심 개념 |
 |---|---|---|
 | 3 | 메뉴에서 테스트 시나리오를 골라 시작·재시작·복귀 | DataAsset, Subsystem, 레벨 전환, UMG, Soft Reference |
@@ -60,6 +92,19 @@
 | 7 | 하드코딩 명령 대신 HQ LLM이 구조화 명령을 제안 | JSON schema, 비동기 요청, validation, fallback |
 
 Phase 3을 먼저 만드는 이유는 이후 실험을 같은 조건으로 반복하기 위해서다. AI가 좋아졌는지 비교하려면 매번 같은 인원, 위치, 장애물, Seed에서 시작할 수 있어야 한다.
+
+### 장기적으로 Multiplayer가 붙을 때
+
+이 내용은 이번 주 구현이나 현재 Technical Spike가 아니다. 장기적으로 Dedicated Server가 전장의 최종 판정을 소유한다. 클라이언트의 Local LLM은 “이 명령을 제안합니다”라고 답할 수만 있고 Damage, Memory, Command, Mission Result를 직접 확정할 수 없다.
+
+```text
+Client Worker의 Proposed Result
+→ Server가 Team/Request/Revision/Schema/Target/실행 가능성 검사
+→ 통과한 Structured Command만 Commit
+→ 기존 Mission Resolver와 결정적 AI가 실행
+```
+
+같은 Team의 request만 해당 Team client worker에 보내는 것은 초기 정보 격리 원칙이다. Worker는 신뢰하지 않으며, 여러 Worker에 fan-out하거나 늦을 때 다른 Worker에 hedged request를 보내는 scheduling은 이후의 Long-term Architecture다. 현재는 simulated delay/timeout/invalid worker로도 검증 가능하도록 인터페이스를 분리한다는 방향만 유지한다.
 
 ## 4. 먼저 알아둘 Unreal의 기본 객체들
 
@@ -1239,6 +1284,8 @@ Scenario Definition의 `Use LLM`은 개인용인지 그룹용인지 고르는 �
 
 앞의 확인은 불필요한 prompt 생성을 줄이고, Queue의 최종 확인은 앞으로 새로운 요청 호출자가 생겨도 옵션을 우회하지 못하게 한다. Scenario가 없는 기존 레벨은 호환성을 위해 이전처럼 LLM을 허용하지만, 활성 Scenario의 Run Context가 잘못됐다면 요청을 차단한다. 이를 `fail closed`라고 부른다.
 
+2026-08-10 사용자 검증에서 `Retry.Scenario.LLMPolicy+Retry.Scenario.Runtime` 자동화 테스트가 모두 통과했다. `Use LLM=false` Scenario PIE에서 개인·그룹 요청을 강제로 트리거해도 Llama 요청, 응답, fallback 관련 로그가 생성되지 않아 실행 정책의 실제 차단 경로까지 확인했다.
+
 관련 코드 위치:
 
 - `Scenario/ScenarioTypes`: Scenario Run의 LLM 허용 정책
@@ -1272,7 +1319,120 @@ SecureArea 완료에는 다음 같은 여러 조건이 필요하다.
 
 그래서 그룹 단위 `CommandExecutionMonitor`가 World 상태를 관찰한다.
 
-## 10. Phase 7 — LLM 연결
+## 10. Phase 6.5 — Operational Objective와 Commander Planner
+
+### Fact, Objective, Command는 서로 다른 질문에 답한다
+
+이번 배치의 핵심은 세 데이터를 한 덩어리로 만들지 않는 것이다.
+
+- Fact: “무슨 일이 확인됐는가?” — 예: `ReconArea_A`가 확보됐다.
+- Operational Objective: “HQ가 어떤 전장 상태를 원하거나 유지하려는가?” — 예: 그 지역의 아군 통제를 유지한다.
+- Command: “그 목표를 위해 누가 지금 무엇을 해야 하는가?” — 예: Group A가 확보 위치를 방어한다.
+
+`AreaSecured`만 보고 언제나 방어 명령을 만들면 전장 사실에 지휘 의도를 몰래 섞게 된다. 어떤 시나리오는 확보 직후 전진해야 하고, 다른 시나리오는 철수할 수도 있다. 그래서 Scenario Definition이 `MaintainAreaControl` 목표를 명시하고 `AreaSecured`는 그 목표를 활성화하는 조건으로만 사용한다.
+
+```text
+Scenario/HQ 의도: MaintainAreaControl(ReconArea_A)
+                     │
+Team Memory Fact: AreaSecured(ReconArea_A)
+                     │ 활성화
+                     ▼
+Runtime Operational Objective
+                     │ Planner 판단
+                     ▼
+Defend + Position → 기존 Mission 실행
+```
+
+### Planner 기준선이 먼저 필요한 이유
+
+첫 Planner는 LLM이 아니라 결정적 C++ 규칙이다. 같은 Objective와 같은 그룹 상태를 넣으면 같은 그룹과 같은 명령 의미가 나온다. 이 기준선이 있어야 나중에 LLM이 다른 대안을 제안했을 때 schema, 팀 권한, 좌표 신뢰, 실행 실패가 LLM 문제인지 게임 시스템 문제인지 분리할 수 있다.
+
+현재 선택 규칙은 의도적으로 작다.
+
+1. Objective와 같은 Team만 후보로 둔다.
+2. 살아 있는 leader가 있어야 한다.
+3. 진행 중인 다른 명령이 없어야 한다. 종료된 명령은 새 명령 전에 정리할 수 있다.
+4. 후보가 여러 개면 Group ID 오름차순으로 고른다.
+5. `MaintainAreaControl`은 `Defend + Position`으로 변환한다.
+
+현재 레벨에서 Group A는 Team 1, Group B는 Team 2이므로 Group B는 적군 후보로 제외되고 Group A가 선택된다.
+
+### Defend가 지속 Mission인 이유
+
+Secure는 “지역을 일정 시간 확보했다”는 완료 사건이 있지만, Defend는 “언제까지 방어할 것인가”가 상위 목표에 달려 있다. 이번 기준선에서 임의의 타이머로 완료시키면 상위 의도를 잃는다. 따라서 Defend Command는 `Executing` 상태를 유지하고 새 계획, 취소, Restart/Return에서 끝난다.
+
+Alert 전투 branch는 Mission branch보다 우선한다. 적을 만나면 기존 전투 판단으로 대응하고, 전투가 끝나면 Mission target인 방어 위치로 복귀한다. 위치는 `AreaSecured` 보고에 담긴 검증된 위치를 사용하지만 실제 이동 전 `DefendPositionWorldAdapter`가 NavMesh 투영과 path 검사를 다시 수행한다.
+
+2026-08-10 사용자 검증에서 기능 체크포인트 Automation이 모두 통과했다. Group A에 기존 Patrol Point를 일부러 등록한 PIE에서도 일반 Patrol로 돌아가지 않고 확보 지역의 지속 Defend Mission을 유지했다. 이는 root BT에서 명시적 Mission이 일반 Patrol보다 우선한다는 설계가 Commander 명령에서도 실제로 보존된다는 뜻이다. 이후 Restart와 Return에서 새 Run 분리, Commander timer 정리, 이전 Defend Mission 제거와 로그까지 모두 정상임을 확인하여 기능 배치를 통합 완료했다.
+
+### 소유권과 수명
+
+- Scenario Definition은 정적 목표 템플릿과 활성화 조건을 소유한다.
+- Scenario Initializer는 현재 Run의 pending 목표를 감시하며 Restart/Return에서 timer와 배열을 정리한다.
+- 활성 `FOperationalObjective`는 Planner 호출 동안 존재하는 런타임 값이다.
+- GroupManager는 생성된 `FCommandIntent`와 실행 상태를 소유한다.
+- 각 NPC Decision Component는 구체화된 Defend Mission을 소유한다.
+
+관련 코드 위치:
+
+- `AI/OperationalObjectiveTypes`
+- `AI/CommanderPlanner`
+- `AI/DefendPositionWorldAdapter`
+- `Scenario/ScenarioOperationalObjectiveEvaluator`
+- `Scenario/ScenarioDefinition`, `ScenarioInitializer`
+- `AI/MissionResolver`, `AI/GroupManagerActor`
+
+아직 나중에 결정할 내용:
+
+- `Advance`, `Regroup` 명령의 정확한 의미와 실행 완료 조건
+- 여러 아군 그룹의 거리, 전투력, 성격을 비교하는 candidate score
+- Defend를 끝내거나 다른 명령으로 바꾸는 재계획 조건
+- 규칙 Planner와 LLM 제안을 조합하는 doctrine/fallback 정책
+
+새 용어:
+
+- **Desired State**: HQ가 만들거나 유지하려는 전장 상태.
+- **Persistent Mission**: 자체 완료 타이머 없이 상위 취소나 재계획까지 유지되는 임무.
+- **Deterministic Tie-break**: 점수가 같은 후보에서도 항상 같은 결과를 고르는 규칙.
+
+### 후속 개선 — CombatState만으로 Mission을 디버그할 수 없는 이유
+
+사용자 PIE 검증에서 Group A가 Defend Mission을 정상 수행해도 기존 AI Debug Widget에는 CombatState만 표시되는 문제가 확인됐다. 이것은 실행 오류가 아니라 디버그 모델이 이전 전투 AI 계층만 보여주기 때문이다.
+
+한 NPC는 동시에 다음 상태를 가질 수 있다.
+
+```text
+Operational Objective: MaintainAreaControl
+Command: Defend / Executing
+Mission: ReconArea_A
+CombatState: TakeCover
+Blackboard Mission Gate: false
+```
+
+`TakeCover`를 `Defend`로 바꾸면 현재 전술 반응을 잃고, `Defend`를 새 CombatState로 추가하면 상위 목표와 순간 행동을 같은 축에 섞게 된다. 그래서 기존 Combat Debug는 유지하고 Mission Debug Snapshot을 별도 행으로 추가한다.
+
+2026-08-10에는 실제 `WBP_AIDebug`에도 이 분리를 반영했다. 기존 전투 행 아래에 Command, Mission, Mission Gate, Sync 네 행을 추가했다. Sync는 Command→Mission과 Mission→Blackboard가 모두 맞으면 초록색, 어느 한 경계라도 다르면 빨간색이므로, 화면에 보이는 `Patrol` 같은 전술 상태와 실제 `Defend` Mission을 동시에 비교할 수 있다.
+
+NPC마다 머리 위에 표시되는 디버그 정보는 세로로 길수록 서로 겹치기 쉽다. 그래서 같은 정보를 삭제하지 않고 왼쪽의 순간 전투 상태와 오른쪽의 지속 Mission 상태로 나눈 2열 표 형태를 사용한다. ProgressBar도 공간을 많이 차지하므로 `HP: N%` 텍스트로 바꿔 작은 면적에서 정확한 값을 읽도록 했다.
+
+Snapshot은 세 경계를 함께 보여준다.
+
+1. GroupManager가 소유한 Command가 있는가.
+2. NPCDecisionComponent가 같은 Command ID의 Mission을 소유하는가.
+3. Blackboard target과 movement gate가 C++ 권위 값과 일치하는가.
+
+전투 중에는 Mission이 사라지는 것이 아니라 movement gate만 false가 된다. 이때 `Mission Active / Movement Suspended / Blackboard Sync OK`가 정상이다. 반대로 Mission target과 Blackboard target이 다르거나 gate bool이 다르면 projection mismatch다.
+
+실제 Behavior Tree의 어느 노드가 실행 중인지는 Unreal Behavior Tree Debugger로 확인한다. 월드 공간 `WBP_AIDebug`는 Command→Mission→Blackboard 경계의 빠른 상태 확인에 집중한다.
+
+관련 코드:
+
+- `Debug/AIDebugTypes`: Snapshot 데이터와 순수 비교 함수
+- `Debug/AIDebugWidget`: 기존 Combat event를 보존한 새 Mission event
+- `Components/NPCDecisionComponent`: 매 tick 권위 상태와 Blackboard 상태 수집
+- `Tests/AIDebugTypesTests`: 정상 sync, 전투 중 gate 중단, mismatch 판정
+
+## 11. Phase 7 — LLM 연결
 
 ### 왜 마지막인가
 
@@ -1301,7 +1461,7 @@ HTTP 요청을 보낸 뒤 레벨이 재시작될 수 있다. 이전 Run의 응�
 
 그래서 요청이 어느 Run에서 시작됐는지 확인하고, 레벨 전환 때 queue/timer를 취소하며, 완료된 요청이 두 번 적용되지 않게 막는다.
 
-## 11. 현재 확정된 선택을 이해하기
+## 12. 현재 확정된 선택을 이해하기
 
 ### 레벨 고정 배치를 먼저 사용하는 이유
 
@@ -1347,7 +1507,7 @@ Blackboard는 BT가 실행에 필요한 현재 값만 공유하고, 복잡한 �
 - 에디터에서 모든 판단 데이터를 한눈에 보기는 어려움
 - 디버그 UI와 로그를 별도로 잘 만들어야 함
 
-## 12. 기능 배치로 반복할 학습 흐름
+## 13. 기능 배치로 반복할 학습 흐름
 
 1. 사용자에게 보이는 end-to-end 기능과 완료 조건을 정한다.
 2. 필요한 새 Unreal/C++ 개념과 설계 tradeoff를 이 문서에 기록한다.
@@ -1357,7 +1517,7 @@ Blackboard는 BT가 실행에 필요한 현재 값만 공유하고, 복잡한 �
 6. 자동화 테스트 전체 목록을 순차 실행하고 모두 통과하면 에디터 Asset 통합과 PIE를 수행한다.
 7. 실제 호출 흐름, 사용자 검증 결과와 남은 질문을 문서에 갱신한다.
 
-## 13. 지금 외우지 않아도 되는 것
+## 14. 지금 외우지 않아도 되는 것
 
 - 모든 Unreal reflection macro의 세부 옵션
 - Asset Manager의 전체 동작
@@ -1368,7 +1528,7 @@ Blackboard는 BT가 실행에 필요한 현재 값만 공유하고, 복잡한 �
 
 필요한 Phase에서 실제 코드와 함께 배운다. 지금은 각 객체가 왜 존재하고 언제 사라지는지만 이해하면 충분하다.
 
-## 14. 다음 단계 전에 확인할 것
+## 15. 다음 단계 전에 확인할 것
 
 Phase 3 첫 단위는 `UScenarioDefinition`이다. 시작하기 전에 다음을 함께 정한다.
 

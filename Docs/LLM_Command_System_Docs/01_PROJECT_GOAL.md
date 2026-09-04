@@ -204,3 +204,82 @@ LLM Order 5종
 - 최종 LLM 모델 선정
 - 최종 프롬프트 튜닝
 - 실제 군사 교리의 완전한 재현
+
+## 1.12 상태 분류 원칙
+
+이 문서의 최종 목표와 현재 구현 상태를 섞지 않는다.
+
+| 상태 | 의미 |
+|---|---|
+| `Current` | 현재 워킹트리 코드 또는 완료된 사용자 검증으로 확인된 기능 |
+| `Immediate Plan` | 다음 구현 배치로 착수할 기능. 현재는 Cached LLM Replay |
+| `Technical Spike` | 기존 Recon → Report → Secure 및 Command / Mission / Team Memory 검증 순서 |
+| `Long-term Architecture` | 현재 스파이크의 경계를 넓히지 않으면서 향후 확장을 안내하는 설계 목표 |
+
+1.6의 `Verb × Target` Command Grammar는 현재 `ECommandVerb`, `ECommandTargetType`, `FCommandValidator`의 초기 허용 조합까지 구현되어 있다. 모든 조합, LLM 기반 Structured Command 생성, Multiplayer 서버 validation은 아직 구현 완료가 아니다. 이 문서의 기존 Grammar 정의가 기준이므로 다른 문서에서 같은 목록을 중복 확장하지 않는다.
+
+Cached LLM Replay는 장기 아이디어가 아니다. [`Generated/BASELINE_STATUS.md`](Generated/BASELINE_STATUS.md)의 다음 작업 정의를 기준으로 하는 **Immediate Plan**이다.
+
+## 1.13 Long-term Architecture — Dedicated Server Multiplayer
+
+현재는 싱글플레이 기술 스파이크부터 구현한다. Multiplayer 자체를 현재 Technical Spike나 이번 주 범위에 포함하지 않지만, 장기적으로 Dedicated Server 기반 환경으로 확장할 수 있도록 다음 책임 경계를 유지한다.
+
+### Server Authority와 Presentation 분리
+
+- 게임 서버가 authoritative world state를 가진다.
+- Damage, Personal/Group Memory, Team Operational Memory, Command, Mission Result처럼 게임 결과에 영향을 주는 상태의 최종 권한은 서버에 둔다.
+- 클라이언트는 게임 상태를 직접 확정하지 않고 presentation과 입력 표현을 담당한다.
+- LLM의 비결정적 결과도 바로 World를 바꾸지 않는다. 제한된 Grammar의 Proposed Structured Command로 반환하고 서버 validation을 통과한 결과만 Commit한다.
+- 현재의 단일 명령 진입점, Command Validator, Delegate/Event 기반 결과 전달, Mission Resolver와 결정적 하위 AI의 책임 분리는 가능한 한 유지한다.
+
+### Worker 추상화와 분산 inference
+
+Dedicated Game Server가 직접 GPU LLM inference를 수행하는 것을 기본 전제로 삼지 않는다.
+
+```text
+Commander
+→ Inference Scheduler
+→ IInferenceWorker
+   ├─ Local Client LLM Worker
+   ├─ Simulated Worker
+   └─ 필요 시 다른 Worker 구현
+```
+
+게임 서버의 장기 책임은 World Authority, Memory/Command State, Inference Request Queue, Worker Scheduling, Result Validation, Final Command Commit이다. 게임 로직은 실제 inference가 어느 머신에서 수행되는지 몰라야 한다.
+
+Client Local LLM Worker는 authoritative actor가 아니라 **Untrusted Inference Worker**다. Worker는 입력 Context로부터 Proposed Structured Result만 반환할 수 있고 World State, Memory, Damage, NPC State, Mission 완료 또는 Command를 직접 확정할 수 없다.
+
+서버는 최소한 Request ID, Team, Context Revision, Deadline, Schema, Command Grammar, Target 존재 여부와 현재 World에서의 실행 가능성을 검증한다. 완전한 Byzantine Fault Tolerance나 치팅 방지는 현재 프로젝트 범위가 아니다.
+
+### Team 정보 격리
+
+클라이언트 Worker는 기본적으로 자신의 Team과 관련된 request만 처리한다.
+
+```text
+Team A Request → Team A Client Workers
+Team B Request → Team B Client Workers
+```
+
+적 Team의 Team Operational Memory나 Commander Context를 다른 Team 클라이언트에 보내지 않는다. 이는 완전한 보안 모델이 아니라 초기 정보 격리 원칙이다.
+
+### 비동기 scheduling과 gameplay 연속성
+
+장기 priority 정책은 다음 후보를 가진다.
+
+- `Critical`: 같은 Team의 여러 Worker에 fan-out하고 First Valid Result Wins.
+- `High`: 첫 Worker가 늦을 때 hedged request를 추가 전송.
+- `Normal`: 한 Worker에 할당하고 timeout 때 재할당.
+- `Background`: Memory Summary처럼 지연 가능한 작업을 idle Worker에서 처리.
+
+LLM latency는 gameplay stall이 되어서는 안 된다.
+
+```text
+Current Plan 실행
+→ Replanning Event
+→ Async LLM Request
+→ 기존 Plan 또는 안전한 Local AI 계속 실행
+→ Response Validation
+→ 적절한 Transition Point에서 새 Plan 적용
+```
+
+실제 Multi-GPU가 없어도 `IInferenceWorker`를 테스트 가능하게 추상화한다. 예를 들어 400 ms 정상 응답, 900 ms 지연, timeout, invalid response를 내는 Simulated Worker들과 실제 Local LLM Worker 하나로 architecture를 검증할 수 있다. 이 전체 절은 **Long-term Architecture**이며 현재 구현 상태가 아니다.

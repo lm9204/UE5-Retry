@@ -1,105 +1,176 @@
-# Phase 0 — Baseline Status
+# Retry LLM Command System — Agent Working Baseline
 
-검증일: 2026-08-02 (Asia/Seoul)  
-기준 브랜치/커밋: `main` / `beffbf9`  
-중요: 작업 트리는 검증 시작 전부터 수정·추가·삭제 파일이 다수 존재했다. 이 문서는 커밋 상태가 아니라 **현재 워킹트리**를 기준으로 한다.
+마지막 정리: 2026-09-04 (Asia/Seoul)
 
-경로 주의: `02_CODEBASE_ANALYSIS.md`와 `05_WORK_ORDER.md` 본문은 일부 산출물을 `Docs/LLM_Command_System/Generated`로 적지만, `06_EDITOR_INTEGRATION.md`와 이번 사용자 지시는 `Docs/LLM_Command_System_Docs/Generated`를 명시한다. 이번 산출물은 후자를 권위 경로로 사용했다.
+구현·검증 기록 기준일: 2026-08-10
 
-## 완료 상태
+목적: 다음 작업을 시작하는 에이전트가 **이 문서 하나로 현재 상태와 다음 순서를 파악**하도록 한다.
 
-- **Code Analysis Complete**
-- **Build Verification Complete** — `RetryEditor Win64 Development` 컴파일 기준
-- **Editor Verification Complete** — Unreal MCP로 현재 워킹트리 PIE 및 에셋 연결 직접 확인
-- **Implementation Not Started**
+## 1. 작업 시작 규칙
 
-## 확인된 사실
+1. 이 문서를 먼저 읽는다.
+2. `git status --short`와 최근 커밋을 확인하여 이 문서 이후 변경을 찾는다.
+3. 현재 작업과 직접 관련된 경우에만 상세 문서를 읽는다.
+4. 계획을 구현 완료로 간주하지 않는다. 아래 상태 표기를 사용한다.
 
-### 프로젝트 및 빌드 구성
+| 상태 | 의미 |
+|---|---|
+| `Planned` | 설계 또는 작업 순서만 있음 |
+| `Code Complete` | 소스와 자동화 테스트 작성 완료 |
+| `Automated Verified` | 사용자가 Automation 통과를 확인 |
+| `Integrated Complete` | Asset 연결과 PIE 회귀까지 확인 |
 
-- `Retry.uproject`의 EngineAssociation GUID `{49272611-4066-C81C-6B46-9590BBDB8BD1}`는 레지스트리에서 `D:\UE_5.8`에 연결된다. 현재 에디터 로그의 실제 버전은 `5.8.1-56057345`다.
-- `Retry.uproject`는 Runtime 모듈 `Retry` 하나와 `ModelContextProtocol`, `AllToolsets` 등 활성 plugin을 선언한다.
-- `Source/Retry.Target.cs`는 Game target, `Source/RetryEditor.Target.cs`는 Editor target이다. 둘 다 `BuildSettingsVersion.V7`, `EngineIncludeOrderVersion.Unreal5_8`, 모듈 `Retry`를 사용한다.
-- `Source/Retry/Retry.Build.cs`의 주요 의존성은 `AIModule`, `NavigationSystem`, `HTTP`, `Json`, `JsonUtilities`, `UMG`, `Slate`, `StateTreeModule`, `GameplayStateTreeModule`, `EnhancedInput`이다.
-- Windows SDK `10.0.22621.0`, Visual Studio 2022 toolchain `14.44.35228`이 UnrealBuildTool에서 인식됐다.
+## 2. 현재 한 줄 상태
 
-### 실제 빌드 검증
+Scenario 선택과 반복 실행, 구조화 Command, Recon/Secure/Defend Mission, Team Operational Memory, 규칙 기반 Commander Planner까지 연결됐다. 다음 독립 기능 배치는 기존 개인·그룹 LLM 요청의 결과를 재현하는 **Cached LLM Replay MVP**다.
 
-실행한 명령:
+## 3. 완료된 기능 배치
 
-```powershell
-& 'D:\UE_5.8\Engine\Build\BatchFiles\Build.bat' `
-  RetryEditor Win64 Development `
-  'C:\Projects\UnrealProjects\Retry 5.8\Retry.uproject' `
-  -WaitMutex -NoHotReloadFromIDE -NoUBA `
-  '-Log=C:\Projects\UnrealProjects\Retry 5.8\Saved\Logs\CodexPhase1BuildNoUBA.log'
-```
+| 날짜 | 기능 배치 | 상태 | 결과 |
+|---|---|---|---|
+| 2026-08-04 | Scenario 실행·Command 기반 | `Integrated Complete` | 메뉴 선택, Seed/Run Context, Restart/Return, validation과 실행 기록 |
+| 2026-08-05 | Recon Area vertical slice | `Integrated Complete` | 관측 후보 선택, 그룹 이동, 보고, `AreaObserved` 저장과 Command 완료 |
+| 2026-08-06 | Secure Area와 Follow Up | `Integrated Complete` | `AreaObserved → Secure → AreaSecured`, 점유 판정과 수명 정리 |
+| 2026-08-06 | Scenario `Use LLM` 정책 | `Integrated Complete` | 비활성 Scenario의 개인·그룹 HTTP 요청 이중 차단 |
+| 2026-08-10 | Operational Objective와 Commander Planner | `Integrated Complete` | `AreaSecured → MaintainAreaControl → Defend Position` 지속 임무 |
+| 2026-08-10 | AI Mission Debug Snapshot | `Automated Verified` | Command/Mission/Blackboard 동기화 UI와 테스트; 실제 PIE 화면 확인만 남음 |
 
-결과:
+## 4. 현재 실행 흐름
 
 ```text
-Result: Succeeded
-Total execution time: 3.08 seconds
+Scenario Menu
+→ UScenarioRuntimeSubsystem: Scenario ID / Seed / Run ID / Launch Options
+→ AScenarioInitializer: 저장된 레벨 구성 검증과 Opening Order 시작
+→ FCommandIntent validation / Group authority
+→ Mission Resolver + World Adapter
+→ Group 전원에게 FMissionContext 원자 배포
+→ UNPCDecisionComponent가 Mission을 Blackboard에 투영
+→ Behavior Tree가 Mission 이동과 기존 CombatState 전투를 실행
+→ Report / Operational Fact
+→ UTeamOperationalMemorySubsystem
+→ Scripted Follow Up 또는 Operational Objective 활성화
+→ FCommanderPlanner
+→ 다음 구조화 Command
 ```
 
-- 성공 로그: `Saved/Logs/CodexPhase1BuildNoUBA.log`
-- 최초 문서의 잘못된 `D:\UE_5.6` 경로로 실행한 시도는 Target의 `V7`/`Unreal5_8`을 지원하지 않아 RulesError가 났다. 프로젝트 GUID와 레지스트리를 대조해 `D:\UE_5.8`이 권위 엔진임을 확인한 뒤 위 명령으로 재검증했으며, 5.6 결과는 기준 상태에서 제외했다.
-- 빌드는 UHT timestamp 확인과 `RetryEditor.target` metadata 갱신 후 성공했다. 강제 clean rebuild는 아니다.
-- Game target, cook, package, Shipping build는 실행하지 않았다.
+## 5. 확정된 설계 결정
 
-### 실행 기준 증거
+- `Fact`, `Operational Objective`, `Command`, `Mission`, `CombatState`는 합치지 않는다.
+- 상위 Command와 권위 상태는 C++이 소유하고 Blackboard에는 BT 실행용 최소 값만 투영한다.
+- LLM보다 결정적인 C++ 규칙을 먼저 만들어 실행 기준선과 자동화 oracle로 사용한다.
+- LLM은 Actor pointer나 임의 좌표가 아니라 semantic ID와 제한된 Structured Command만 제안한다.
+- 실제 Actor, 위치, Team/Run 권한, NavMesh/path 실행 가능성은 C++에서 다시 검증한다.
+- Group Mission은 전원 적용 또는 전원 실패하는 원자적 배포를 사용한다.
+- Defend는 임의 타이머로 완료하지 않는 지속 Mission이다. 취소·재계획·Restart/Return이 종료 경계다.
+- 후보 선택 우선순위는 `Hard Constraint > Command/Doctrine Weight > Leader Personality Modifier > Deterministic ID Tie-break`다.
+- Scenario의 NPC·Group·Marker는 현재 레벨에 저장 배치하고 Initializer가 ID와 연결을 검증한다. DataAsset 기반 전체 Spawn은 아직 도입하지 않는다.
+- Team Operational Memory는 World lifetime, Scenario 선택과 Run Context는 GameInstance lifetime을 사용한다.
+- Dedicated Server와 분산 inference worker는 장기 방향이며 현재 기능 배치에 끼워 넣지 않는다.
 
-- `Config/DefaultEngine.ini`의 editor/game 기본 맵은 `/Game/ThirdPerson/Lvl_ThirdPerson`, global default GameMode는 `/Game/ThirdPerson/Blueprints/BP_ThirdPersonGameMode`다.
-- 최신 `Saved/Logs/Retry.log`는 2026-08-02 UE `5.8.1-56057345` 에디터 기동과 이번 MCP PIE(`UEDPIE_0_Lvl_ThirdPerson`) 기록을 포함한다.
-- 이전 로그 `Saved/Logs/Retry-backup-2026.08.01-12.35.25.log`에는 다음 실행 증거가 있다.
-  - `Lvl_ThirdPerson` PIE world 생성
-  - 실제 GameMode `BP_ThirdPersonGameMode_C`
-  - 네 NPC가 `BT_LowIntelNPC` 실행
-  - Group A/B 각각 리더 1명, member array 총 2명 등록
-  - 전투 시작/아군 사망 그룹 메모리 생성
-  - 그룹 감정 임계값 도달, LLM 그룹 요청, 정상 HTTP 응답, `SetOrderForAll` 전파
-- 위 기록은 **2026-08-01 당시 실행 증거**이며 2026-08-02 현재 워킹트리의 새 PIE 통과를 의미하지 않는다.
-- 더 오래된 `Saved/Logs/Retry-backup-2026.08.01-05.19.50.log`에는 `Cast of Object /Script/CoreUObject.Default__Object to Actor failed` fatal 기록이 있다. 이후 로그에서 PIE 및 LLM 흐름이 실행된 사실은 확인되지만, 원인과 수정 커밋은 이 분석만으로 확정할 수 없다.
-- 에디터 시작 시 `LogAutomationTest: Error: Condition failed` 3건이 반복된다. 프로젝트 자동화 테스트 실패인지 엔진/플러그인 자체 점검 메시지인지 현재 로그 조각만으로 확정할 수 없다.
+## 6. 다음 작업 순서
 
-## 코드에 근거한 추론
+### 6.1 직전 배치 마감
 
-- 현재 Editor target이 up-to-date로 성공했으므로 UHT와 C++ 산출물은 현재 입력 타임스탬프 기준 일치한다. 다만 강제 clean rebuild를 수행한 것은 아니다.
-- 2026-08-01 로그의 동일 레벨·동일 네 NPC 실행은 현재 기본 테스트 장면이 `Lvl_ThirdPerson`임을 강하게 뒷받침한다.
-- 현재 source에는 자동 시나리오 초기화기가 없으므로 로그에 나타난 Group/NPC는 레벨 배치와 Blueprint 인스턴스 참조에 의존할 가능성이 높다.
+AI Mission Debug UI를 PIE에서 확인한다.
 
-## 후속으로 남은 미확인 항목
+- Command/Mission 값과 target 표시
+- 전투 중 Mission movement gate 중단과 전투 종료 후 복귀
+- Command↔Mission, Mission↔Blackboard sync 색상
+- Restart/Return 후 이전 표시 제거
 
-- NavMesh bounds 밖을 포함한 전체 작전 영역의 동적 pathfinding 성공 범위
-- target loss 이후 Search/Patrol 복귀와 모든 latent task 종료의 장시간 실행 결과
-- localhost LLM 서버 정상 응답 시 `SetOrderForAll` 이후 score/CombatState 변화
-- 현재 패키징 목록, cook 포함 map, Game/Shipping/package 성공 여부
+### 6.2 Immediate Plan — Cached LLM Replay MVP
 
-## 기준 상태 판정
+목적은 성능 cache가 아니라 테스트 재현성, A/B 비교, LLM 결정 검증이다.
 
-| 구분 | 상태 | 근거/제한 |
-|---|---|---|
-| Development Editor 컴파일 | Complete | UBT `Result: Succeeded`, up-to-date |
-| Editor 기동 | Complete | 2026-08-02 UE 5.8.1 현재 세션 |
-| PIE 실행 이력 | Confirmed | 2026-08-01 과거 로그 + 2026-08-02 MCP 실행 |
-| 현재 워킹트리 PIE | Complete (baseline) | MCP 실행: BT/그룹/전투/메모리 확인, 정상 종료 |
-| Game/Shipping build | Incomplete | 미실행 |
-| Cook/Package | Incomplete | 미실행 |
-| 구현 | Not Started | 문서만 생성 |
+```text
+Record: request → HTTP → schema validation → JSON 저장 → 공통 결과 적용
+Replay: request → stable key 조회 → schema/version 검증 → 공통 결과 적용
+```
 
-## Phase 2 전 남은 결정
+필수 규칙:
 
-에디터 확인 작업은 MCP로 완료했다. 사용자는 Blackboard가 C++ 내부 판단 후 상태 중심으로 전달하는 의도된 구조임을 확인했고, BT observer abort 정리는 현재 전환 작업 이후로 이관했다. Phase 2 진입 가능 상태이며 Game/Shipping/package 검증은 Phase 3 완료 게이트로 이관한다.
+- 내부 상태는 `Disabled / Live / Record / Replay`로 구분한다.
+- Replay는 HTTP를 만들지 않는다.
+- Cache miss, version mismatch, 손상된 JSON은 명시적으로 실패하며 Live로 fallback하지 않는다.
+- Record와 Replay는 같은 validation과 result application 경로를 사용한다.
+- Scenario generation/Run ID, weak target, NPC death guard를 Replay에서도 적용한다.
+- stable key에는 최소한 Scenario ID, Seed, Request Type, stable NPC/Group ID, 실제 prompt 입력 hash, Prompt/Schema Version, Run별 ordinal을 포함한다.
+- 첫 A/B Scenario는 동일 초기 조건에서 `Memory 없음`과 `AllyDeath Memory 있음`만 비교한다.
 
-## Unreal MCP 후속 검증 갱신 — 2026-08-02
+완료 조건:
 
-기존 미확인 항목 중 에디터로 확인 가능한 항목은 Unreal MCP 직접 검증으로 해소했다. 상세 원시 결과와 체크리스트는 `EDITOR_ACTIONS.md` 11절에 기록했다.
+1. Scenario 시작 전에 Replay 선택 가능.
+2. 검증된 개인·그룹 response를 JSON으로 Record.
+3. 동일 입력에서 동일 key, Memory/Personality 변경 시 다른 key.
+4. Replay HTTP 요청 0건과 miss의 live fallback 0건을 테스트로 증명.
+5. Restart/Return과 requester 제거 뒤 stale 결과 적용 차단.
+6. 동일 Scenario/Seed Replay 반복과 A/B PIE 비교 완료.
 
-- GameMode/Controller/Pawn/HUD/GameState, NPC/AIController/BT 기본 참조 확인 완료.
-- Group A/B 및 네 NPC의 Team/Group/Leader/Patrol 인스턴스 값 확인 완료.
-- `BB_NPC` key/type와 `E_CombatState` 순서 확인 완료.
-- `BT_LowIntelNPC` full node 목록과 decorator abort 설정 확인 완료.
-- 현재 워킹트리 PIE에서 네 BT, 그룹 등록, 상태 전이, 교전, 메모리, LLM 요청 실패 폴백을 확인하고 정상 종료.
-- 확인된 구조: Blackboard는 C++ 내부 판단 전환에 따라 최소 key만 유지한다. 모든 state decorator의 Observer Aborts가 `None`인 상태는 알려진 후속 BT 수정 항목이다.
-- LLM 서버가 응답하지 않아 `SetOrderForAll` 성공 경로는 이번 baseline에서 미검증이다.
-- Game/Shipping build와 package/cook은 여전히 미실행이며, packaging은 Phase 3 Scenario Loader 완료 게이트에서 수행하기로 결정했다.
+이번 배치에서 만들지 않는 것: 범용 cache browser/editor, migration framework, 다중 model UI, Shipping cache packaging, distributed worker scheduler.
+
+### 6.3 Replay 이후
+
+Phase 7 Structured LLM Command로 돌아간다.
+
+```text
+LLM JSON
+→ transport DTO parse
+→ schema / Command grammar validation
+→ Team / Run / Target validation
+→ 기존 Group authority
+→ Mission Resolver
+→ 기존 BT 실행
+```
+
+## 7. 구현 전 결정 게이트
+
+Cached Replay를 시작하기 전에 사용자와 다음을 확정한다.
+
+1. UI는 기존 `Use LLM + 캐시 사용` checkbox를 유지할지, 실행 Mode를 직접 노출할지.
+2. 현재 없는 `ScenarioVersion`을 첫 cache key에 포함할지.
+3. 개인·그룹 response의 필수 JSON 필드, 타입과 허용 범위.
+4. 승인된 cache snapshot을 언제 source fixture로 승격할지.
+
+후속 Phase에서 결정할 항목:
+
+- Defend 취소와 재계획 조건
+- `Advance`, `Regroup`의 의미와 완료 조건
+- 여러 아군 Group의 거리·전투력·성격 candidate score
+- 규칙 Planner와 LLM 제안을 조합하는 doctrine/fallback 정책
+- BT decorator의 남은 `Observer Aborts=None` 부채
+- Game target 및 등록 map cook/package 검증 시점
+
+## 8. 설계 결정 기록 절차
+
+Tradeoff가 생기면 에이전트가 임의로 확정하지 않는다.
+
+1. 결정 대상, 지금 필요한 이유, 관련 Unreal/C++ 개념과 현재 코드 상태를 설명한다.
+2. 각 선택지의 실제 게임 동작, 코드 영향, 장점, 단점, 변경 비용을 비교한다.
+3. 권장안과 그 단점을 함께 제시하고 사용자 선택을 받는다.
+4. 선택 뒤 사용자에게 아래 세 내용을 확인한다.
+   - 가장 중요한 선택 이유
+   - 알고도 감수하는 단점
+   - 결정을 다시 검토할 조건
+5. 확인된 결정을 아래 작업 일지에 기록한 뒤 구현한다.
+
+## 9. Agent 작업 일지
+
+### 2026-09-04 — 누적 변경 커밋과 문서 기준선 정리
+
+- 구현 내용: 새 게임 기능 구현 없음.
+- 수정 내용: 누적된 Commander/Defend와 AI Mission Debug 변경을 기능별 커밋으로 분리했다. 이 문서를 최신 단일 agent handoff로 갱신했다.
+- 설계 선택: 새 handoff 파일을 추가하지 않고 오래된 `BASELINE_STATUS.md`를 재사용한다.
+- 선택 이유: 문서 수를 늘리지 않으면서 작업 시작점을 하나로 고정할 수 있다.
+- 감수한 단점: 과거 기준선 내용은 Git history에서 조회해야 한다.
+- 재검토 조건: 이 문서가 300줄을 넘거나 여러 병렬 작업이 서로 다른 기준선을 요구할 때 분리한다.
+
+## 10. 상세 문서 조회 규칙
+
+- 현재 상태와 다음 작업: 이 문서
+- 기술 구현 상세와 과거 Phase: `IMPLEMENTATION_PLAN.md`
+- 사용자 학습 설명과 개념: `LEARNING_GUIDE.md`
+- 에디터/Automation/PIE 절차: `EDITOR_ACTIONS.md`
+- 초기 코드 구조 분석: `CODEBASE_FLOW_ANALYSIS.md`, 문제 조사 때만 사용
+- 전체 장기 목표: `../01_PROJECT_GOAL.md`, 범위 결정 때만 사용
+
+상세 문서를 매 세션 처음부터 모두 읽거나 같은 상태를 여러 문서에 반복 기록하지 않는다.
