@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
+#include "Debug/AIDebugTypes.h"
 #include "AIDebugWidget.generated.h"
 
 UCLASS()
@@ -22,4 +23,9 @@ public:
 		const FString& TargetName,
 		float DistToTarget
 	);
+
+	/** Kept separate so existing WBP_AIDebug combat event nodes remain valid. */
+	UFUNCTION(BlueprintImplementableEvent, Category="Debug",
+		meta=(DisplayName="Update Mission Debug Info"))
+	void UpdateMissionDebugInfo(const FAIMissionDebugSnapshot& Snapshot);
 };

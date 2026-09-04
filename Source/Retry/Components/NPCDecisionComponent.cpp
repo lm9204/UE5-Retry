@@ -730,7 +730,8 @@ void UNPCDecisionComponent::UpdateDebugWidget()
         Cast<UAIDebugWidget>(NPC->AIDebugWidget->GetUserWidgetObject());
     if (!Widget) return;
 
-    FString StateName = UEnum::GetValueAsString(CurrentState);
+    const FString StateName = StaticEnum<ENPCCombatState>()->GetNameStringByValue(
+        static_cast<int64>(CurrentState));
     FString TargetName = CachedContext.Target ?
         CachedContext.Target->GetName() : TEXT("None");
 
@@ -745,6 +746,34 @@ void UNPCDecisionComponent::UpdateDebugWidget()
         TargetName,
         CachedContext.DistToTarget
     );
+
+	UBlackboardComponent* Blackboard = AIC->GetBlackboardComponent();
+	FCommandIntent CurrentCommand;
+	const FCommandIntent* CurrentCommandPtr = nullptr;
+	if (IsValid(NPC->MyGroup) && NPC->MyGroup->HasCurrentCommand())
+	{
+		CurrentCommand = NPC->MyGroup->GetCurrentCommand();
+		CurrentCommandPtr = &CurrentCommand;
+	}
+
+	const bool bBlackboardTargetSet = Blackboard
+		&& Blackboard->IsVectorValueSet(
+			MissionBlackboard::TargetLocationKey);
+	const FVector BlackboardTargetLocation = Blackboard
+		? Blackboard->GetValueAsVector(
+			MissionBlackboard::TargetLocationKey)
+		: FVector::ZeroVector;
+	const bool bBlackboardMovementAllowed = Blackboard
+		&& Blackboard->GetValueAsBool(
+			MissionBlackboard::MovementAllowedKey);
+	Widget->UpdateMissionDebugInfo(BuildAIMissionDebugSnapshot(
+		bHasActiveMission,
+		ActiveMissionContext,
+		IsMissionMovementAllowedForState(CurrentState),
+		CurrentCommandPtr,
+		bBlackboardTargetSet,
+		BlackboardTargetLocation,
+		bBlackboardMovementAllowed));
 }
 
 void UNPCDecisionComponent::SetOrder(ENPCOrder Order, float Weight)
